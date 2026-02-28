@@ -39,7 +39,7 @@ Respond in JSON format:
 Be conservative — only set escalate=true if there's something worth a deeper look.
 """
 
-ANALYSIS_SYSTEM_PROMPT = """You are an expert options trader analyzing Skylit Heatseeker dealer positioning heatmaps.
+ANALYSIS_SYSTEM_PROMPT = """You are an expert options trader analyzing Skylit Heatseeker dealer positioning heatmaps for 0DTE (zero days to expiration) options trading.
 
 You have deep knowledge of:
 - Heatseeker node types: positive gamma (yellow/green = absorption), negative gamma (purple/blue = amplification)
@@ -68,6 +68,20 @@ Your analysis should cover:
    - Profit target and stop loss level
    - Confidence level (1-10)
 8. **Stand Aside?**: If the map is unclear (Rainbow Road, mixed signals), say so clearly.
+
+Also consider VIX context when provided:
+- VIX < 15 (low vol): Tight ranges, pin jobs, fast theta decay
+- VIX 15-20 (normal): Standard setups, nodes behave predictably
+- VIX 20-25 (elevated): Wider ranges, nodes may overshoot, wider margins
+- VIX 25-30 (high): Fast moves, gatekeepers less reliable, reduce size
+- VIX > 30 (extreme): Maps reshuffle frequently, protect capital, only extreme R:R
+
+Also consider rate-of-change context when provided:
+- Accumulation alerts: nodes building = strong directional pull
+- Dissipation alerts: nodes weakening = potential explosive move or reversal
+- Reshuffle alerts: thesis may be INVALIDATED — re-evaluate from scratch
+- Rolling ceiling/floor: strong directional bias building
+- King shift: primary target changed — reassess everything
 
 Respond in JSON format with these fields. Be honest about uncertainty.
 Do NOT force a trade if the setup isn't there. "No trade" is a valid recommendation.
@@ -165,10 +179,19 @@ class HeatmapAnalyzer:
             return None
 
     def analyze(self, image_path: str, market_context: dict = None,
-                recent_analyses: list = None) -> Optional[dict]:
+                recent_analyses: list = None, vix_context: dict = None,
+                roc_summary: dict = None, confluence_state: dict = None) -> Optional[dict]:
         """
         Full analysis of a heatmap capture.
         Uses Sonnet for detailed pattern recognition and trade recommendation.
+        
+        Args:
+            image_path: Path to the heatmap screenshot
+            market_context: SPY/QQQ price data from OpenD
+            recent_analyses: Previous triage results for continuity
+            vix_context: VIX regime, level, and guidance from VIXMonitor
+            roc_summary: Rate of change state from RateOfChangeTracker
+            confluence_state: Cross-index confluence state
         
         Returns: Full analysis dict with thesis, recommendation, confidence, etc.
         """
@@ -198,7 +221,25 @@ class HeatmapAnalyzer:
         if market_context:
             user_content.append({
                 "type": "text",
-                "text": f"Current market data:\n{json.dumps(market_context, indent=2)}"
+                "text": f"Current market data (SPY/QQQ from OpenD):\n{json.dumps(market_context, indent=2)}"
+            })
+
+        if vix_context:
+            user_content.append({
+                "type": "text",
+                "text": f"VIX context:\n{json.dumps(vix_context, indent=2)}"
+            })
+
+        if roc_summary:
+            user_content.append({
+                "type": "text",
+                "text": f"Rate of change (recent node value trends):\n{json.dumps(roc_summary, indent=2)}"
+            })
+
+        if confluence_state:
+            user_content.append({
+                "type": "text",
+                "text": f"Cross-index confluence state:\n{json.dumps(confluence_state, indent=2)}"
             })
 
         if recent_analyses:
@@ -208,7 +249,7 @@ class HeatmapAnalyzer:
             ])
             user_content.append({
                 "type": "text",
-                "text": f"Recent triage results (for rate-of-change context):\n{recent_summary}"
+                "text": f"Recent triage results (for continuity):\n{recent_summary}"
             })
 
         try:

@@ -14,6 +14,9 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 from config import Config
+from vix_monitor import vix_monitor
+from confluence import confluence, ConfluenceDetector
+from rate_of_change import roc_tracker
 
 app = Flask(__name__)
 CORS(app)  # Allow Chrome extension to POST
@@ -151,6 +154,86 @@ def get_config():
     })
 
 
+# ─── VIX Endpoints ────────────────────────────────────────────────
+
+@app.route('/api/vix', methods=['GET'])
+def get_vix():
+    """Get current VIX state and regime."""
+    current = vix_monitor.get_current()
+    if not current:
+        return jsonify({'error': 'VIX data unavailable', 'note': 'Market may be closed'}), 503
+    return jsonify(current)
+
+
+@app.route('/api/vix/context', methods=['GET'])
+def get_vix_context():
+    """Get VIX context formatted for analysis engine."""
+    context = vix_monitor.get_context_for_analysis()
+    return jsonify(context)
+
+
+@app.route('/api/vix/intraday', methods=['GET'])
+def get_vix_intraday():
+    """Get VIX intraday candle data."""
+    candles = vix_monitor.get_intraday_history()
+    if not candles:
+        return jsonify({'error': 'No intraday data', 'note': 'Market may be closed'}), 503
+    return jsonify({'candles': candles, 'count': len(candles)})
+
+
+@app.route('/api/vix/alerts', methods=['GET'])
+def get_vix_alerts():
+    """Get recent VIX alerts (spikes, regime changes)."""
+    limit = request.args.get('limit', 20, type=int)
+    return jsonify({'alerts': vix_monitor.get_alerts(limit=limit)})
+
+
+# ─── Confluence Endpoints ─────────────────────────────────────────
+
+@app.route('/api/confluence', methods=['GET'])
+def get_confluence():
+    """Get current cross-index confluence state."""
+    result = confluence.check_confluence()
+    return jsonify(result.to_dict())
+
+
+@app.route('/api/confluence/history', methods=['GET'])
+def get_confluence_history():
+    """Get confluence check history."""
+    limit = request.args.get('limit', 50, type=int)
+    return jsonify({'history': confluence.get_history(limit=limit)})
+
+
+@app.route('/api/confluence/trend', methods=['GET'])
+def get_confluence_trend():
+    """Get confluence trend (improving/deteriorating)."""
+    trend = confluence.get_trend()
+    if not trend:
+        return jsonify({'error': 'Not enough data for trend analysis'}), 404
+    return jsonify(trend)
+
+
+# ─── Rate of Change Endpoints ────────────────────────────────────
+
+@app.route('/api/roc/alerts', methods=['GET'])
+def get_roc_alerts():
+    """Get rate-of-change alerts (accumulation, dissipation, reshuffles)."""
+    symbol = request.args.get('symbol')
+    limit = request.args.get('limit', 50, type=int)
+    return jsonify({'alerts': roc_tracker.get_alerts(symbol=symbol, limit=limit)})
+
+
+@app.route('/api/roc/summary/<symbol>', methods=['GET'])
+def get_roc_summary(symbol):
+    """Get rate-of-change summary for a specific index."""
+    summary = roc_tracker.get_summary(symbol.upper())
+    if not summary:
+        return jsonify({'error': f'No data for {symbol}'}), 404
+    return jsonify(summary)
+
+
+# ─── Status Endpoint ─────────────────────────────────────────────
+
 @app.route('/api/status', methods=['GET'])
 def status():
     """Full status dashboard — useful for quick validation."""
@@ -173,6 +256,9 @@ def status():
         'capture_path_exists': base_path.exists(),
         'total_captures': total_captures,
         'capture_dates': dates[:10],  # Last 10 days
+        'vix': vix_monitor.get_context_for_analysis(),
+        'confluence': confluence.check_confluence().to_dict() if confluence._states else None,
+        'roc_alerts': roc_tracker.get_alerts(limit=5),
         'config': {
             'opend_host': Config.OPEND_HOST,
             'opend_port': Config.OPEND_PORT,
