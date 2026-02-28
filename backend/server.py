@@ -90,6 +90,7 @@ def receive_capture():
         json.dump(meta, f, indent=2)
 
     # Save scraped DOM data separately (this is the cheap-to-analyze version)
+    grade_results = None
     if scraped_data:
         scraped_path = date_folder / f'{Path(filename).stem}_data.json'
         with open(str(scraped_path), 'w') as f:
@@ -97,16 +98,80 @@ def receive_capture():
         node_count = scraped_data.get('total_nodes', 0)
         panel_count = scraped_data.get('panel_count', 0)
         print(f'[Capture] Saved: {file_path} ({meta["file_size"]} bytes) + scraped data ({panel_count} panels, {node_count} nodes)')
+
+        # ── Auto-Grade on Capture ──────────────────────────────
+        try:
+            from grader_adapter import grade_all_panels
+            from grader import format_grade_report, should_escalate_to_claude
+
+            grade_results = grade_all_panels(scraped_data)
+
+            # Print summary to console
+            print(f'[Grader] {"="*50}')
+            for ticker in ["SPXW", "SPY", "QQQ"]:
+                if ticker in grade_results:
+                    g = grade_results[ticker]
+                    i = g["intraday"]
+                    esc = "✅ ESCALATE" if g.get("escalate_to_claude") else "⏭️ skip"
+                    pat = g.get("pattern", "")
+                    pat_str = f" | {pat.upper()}" if pat not in ("mixed", "unknown") else ""
+                    pin_str = " | 📌PINNED" if g.get("pinned", {}).get("pinned") else ""
+                    print(f'[Grader] {ticker}: {i["score"]}/{i["max"]} '
+                          f'({i["pct"]}%) {i["grade"]} | {esc}{pat_str}{pin_str}')
+
+            # Print best panel detail
+            best = grade_results.get("best")
+            if best and best in grade_results:
+                print(f'[Grader] Best: {best}')
+                report = format_grade_report(grade_results[best])
+                for line in report.split('\n'):
+                    print(f'[Grader]   {line}')
+            print(f'[Grader] {"="*50}')
+
+            # Save grade alongside capture
+            grade_path = date_folder / f'{Path(filename).stem}_grade.json'
+            with open(str(grade_path), 'w') as f:
+                # Strip non-serializable stuff, keep just the grades
+                save_grades = {
+                    k: v for k, v in grade_results.items()
+                    if k not in ("best", "summary")
+                }
+                save_grades["_best"] = best
+                save_grades["_summary"] = grade_results.get("summary", {})
+                json.dump(save_grades, f, indent=2)
+            print(f'[Grader] Saved: {grade_path}')
+
+        except Exception as e:
+            print(f'[Grader] Auto-grade failed: {e}')
+            import traceback
+            traceback.print_exc()
     else:
         print(f'[Capture] Saved: {file_path} ({meta["file_size"]} bytes) [screenshot only, no DOM data]')
 
-    return jsonify({
+    response_data = {
         'status': 'ok',
         'filename': filename,
         'path': str(file_path),
         'size': meta['file_size'],
-        'timestamp': timestamp
-    })
+        'timestamp': timestamp,
+    }
+    if grade_results:
+        # Include grade summary in response so extension could display it
+        best = grade_results.get("best")
+        if best and best in grade_results:
+            bi = grade_results[best]["intraday"]
+            response_data['grade'] = {
+                'best_panel': best,
+                'score': bi['score'],
+                'max': bi['max'],
+                'pct': bi['pct'],
+                'grade': bi['grade'],
+                'escalate': grade_results[best].get('escalate_to_claude', False),
+                'pattern': grade_results[best].get('pattern', ''),
+                'pinned': grade_results[best].get('pinned', {}).get('pinned', False),
+            }
+
+    return jsonify(response_data)
 
 
 @app.route('/api/captures', methods=['GET'])
