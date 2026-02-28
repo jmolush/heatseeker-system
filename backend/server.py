@@ -151,6 +151,37 @@ def get_config():
     })
 
 
+@app.route('/api/status', methods=['GET'])
+def status():
+    """Full status dashboard — useful for quick validation."""
+    base_path = Config.CAPTURE_BASE_PATH
+    total_captures = 0
+    dates = []
+
+    if base_path.exists():
+        for d in sorted(base_path.iterdir(), reverse=True):
+            if d.is_dir() and len(d.name) == 10:
+                count = len(list(d.glob('*.png')))
+                total_captures += count
+                dates.append({'date': d.name, 'count': count})
+
+    return jsonify({
+        'status': 'ok',
+        'version': '0.1.0',
+        'timestamp': datetime.utcnow().isoformat(),
+        'capture_path': str(base_path),
+        'capture_path_exists': base_path.exists(),
+        'total_captures': total_captures,
+        'capture_dates': dates[:10],  # Last 10 days
+        'config': {
+            'opend_host': Config.OPEND_HOST,
+            'opend_port': Config.OPEND_PORT,
+            'paper_trading': Config.PAPER_TRADING_ENABLED,
+            'tickers': Config.OPEND_TICKERS,
+        }
+    })
+
+
 if __name__ == '__main__':
     # Ensure capture directory exists
     Config.CAPTURE_BASE_PATH.mkdir(parents=True, exist_ok=True)

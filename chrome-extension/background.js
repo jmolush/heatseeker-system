@@ -97,7 +97,7 @@ async function captureTab() {
 async function sendToBackend(dataUrl, filename, dateSubfolder, timestamp) {
   if (!config.backendUrl) {
     console.warn('[Heatseeker] No backend URL configured');
-    return;
+    return { error: 'No backend URL configured' };
   }
 
   try {
@@ -118,14 +118,28 @@ async function sendToBackend(dataUrl, filename, dateSubfolder, timestamp) {
     });
 
     if (!result.ok) {
-      throw new Error(`Backend returned ${result.status}: ${await result.text()}`);
+      const errText = await result.text();
+      throw new Error(`Backend returned ${result.status}: ${errText}`);
     }
 
-    return await result.json();
+    const data = await result.json();
+    console.log(`[Heatseeker] Backend saved: ${data.path} (${data.size} bytes)`);
+    return data;
   } catch (err) {
-    console.error('[Heatseeker] Failed to send to backend:', err);
-    // Don't throw — capture succeeded even if backend is down
-    // We can add local fallback storage later
+    console.error('[Heatseeker] Failed to send to backend:', err.message);
+
+    // Show notification so user knows backend is down
+    if (config.notifications) {
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: 'Heatseeker — Backend Error',
+        message: `Could not reach backend: ${err.message}`,
+        silent: false
+      });
+    }
+
+    return { error: err.message };
   }
 }
 
