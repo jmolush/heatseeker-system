@@ -76,6 +76,12 @@ Also consider VIX context when provided:
 - VIX 25-30 (high): Fast moves, gatekeepers less reliable, reduce size
 - VIX > 30 (extreme): Maps reshuffle frequently, protect capital, only extreme R:R
 
+Consider the market day type when provided:
+- TREND DAY: Trade with direction, enter on pullbacks, don't fade. King Node is destination.
+- LEVELS DAY: Fade the edges, avoid midpoint. Play reversals at nodes. Pin jobs near close.
+- WHIPSAW DAY: Reduce size or sit out. Multiple failed tests, reversals don't hold. Only extreme setups.
+The day type can reclassify as the session evolves — a levels day can become a trend day on a breakout.
+
 Also consider rate-of-change context when provided:
 - Accumulation alerts: nodes building = strong directional pull
 - Dissipation alerts: nodes weakening = potential explosive move or reversal
@@ -180,7 +186,8 @@ class HeatmapAnalyzer:
 
     def analyze(self, image_path: str, market_context: dict = None,
                 recent_analyses: list = None, vix_context: dict = None,
-                roc_summary: dict = None, confluence_state: dict = None) -> Optional[dict]:
+                roc_summary: dict = None, confluence_state: dict = None,
+                regime: dict = None) -> Optional[dict]:
         """
         Full analysis of a heatmap capture.
         Uses Sonnet for detailed pattern recognition and trade recommendation.
@@ -240,6 +247,12 @@ class HeatmapAnalyzer:
             user_content.append({
                 "type": "text",
                 "text": f"Cross-index confluence state:\n{json.dumps(confluence_state, indent=2)}"
+            })
+
+        if regime:
+            user_content.append({
+                "type": "text",
+                "text": f"Market day type classification:\n{json.dumps(regime, indent=2)}"
             })
 
         if recent_analyses:

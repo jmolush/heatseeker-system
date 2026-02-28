@@ -17,6 +17,7 @@ from config import Config
 from vix_monitor import vix_monitor
 from confluence import confluence, ConfluenceDetector
 from rate_of_change import roc_tracker
+from market_regime import regime_classifier
 
 app = Flask(__name__)
 CORS(app)  # Allow Chrome extension to POST
@@ -230,6 +231,31 @@ def get_roc_summary(symbol):
     if not summary:
         return jsonify({'error': f'No data for {symbol}'}), 404
     return jsonify(summary)
+
+
+# ─── Market Regime Endpoints ──────────────────────────────────────
+
+@app.route('/api/regime', methods=['GET'])
+def get_regime():
+    """Get current market day type classification (trend/levels/whipsaw)."""
+    symbol = request.args.get('symbol', 'SPY')
+    result = regime_classifier.classify(symbol)
+    return jsonify(result.to_dict())
+
+
+@app.route('/api/regime/history', methods=['GET'])
+def get_regime_history():
+    """Get regime classification history (how the day evolved)."""
+    return jsonify({'history': regime_classifier.get_history()})
+
+
+@app.route('/api/regime/reclassified', methods=['GET'])
+def get_regime_reclassified():
+    """Check if the day type changed since last check."""
+    change = regime_classifier.has_reclassified()
+    if change:
+        return jsonify(change)
+    return jsonify({'reclassified': False})
 
 
 # ─── Status Endpoint ─────────────────────────────────────────────
