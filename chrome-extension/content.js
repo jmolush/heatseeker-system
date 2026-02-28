@@ -15,8 +15,8 @@
    * - Rows have inline `background-color: rgb(r, g, b)` for gamma coloring
    * - Dollar values are in <span class="tabular-nums"> with font-weight 700
    * - King nodes have a lucide-star SVG icon
-   * - Strike prices are text content in the row
-   * - Panels are identified by ticker labels (SPXW, SPY, QQQ)
+   * - Strike prices are in the left cell (div.flex-shrink-0)
+   * - Standard layout: 4 panels — SPXW, SPY, QQQ, VIX (Trinity + VIX gamma)
    */
   function scrapeHeatmapData() {
     const result = {

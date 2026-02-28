@@ -76,6 +76,15 @@ Also consider VIX context when provided:
 - VIX 25-30 (high): Fast moves, gatekeepers less reliable, reduce size
 - VIX > 30 (extreme): Maps reshuffle frequently, protect capital, only extreme R:R
 
+When VIX gamma distribution data is provided (scraped from the 4th panel):
+- The VIX heatmap shows dealer positioning in VIX options — this reveals WHERE dealers expect vol to land
+- VIX King Node = expected VIX settlement target (like SPX king = price target)
+- Heavy positive gamma at a VIX strike = dealers absorb vol spikes at that level (vol ceiling)
+- Heavy negative gamma at a VIX strike = dealers amplify moves through that level (vol acceleration)
+- If VIX gamma shows a strong floor with negative gamma below = vol unlikely to drop further → stay defensive
+- If VIX gamma shows a ceiling = vol spike will be absorbed → more confident in directional trades
+- Cross-reference VIX gamma king with actual VIX price: if VIX is far from king, expect mean reversion toward it
+
 Consider the market day type when provided:
 - TREND DAY: Trade with direction, enter on pullbacks, don't fade. King Node is destination.
 - LEVELS DAY: Fade the edges, avoid midpoint. Play reversals at nodes. Pin jobs near close.
@@ -187,7 +196,7 @@ class HeatmapAnalyzer:
     def analyze(self, image_path: str, market_context: dict = None,
                 recent_analyses: list = None, vix_context: dict = None,
                 roc_summary: dict = None, confluence_state: dict = None,
-                regime: dict = None) -> Optional[dict]:
+                regime: dict = None, scraped_data: dict = None) -> Optional[dict]:
         """
         Full analysis of a heatmap capture.
         Uses Sonnet for detailed pattern recognition and trade recommendation.
@@ -199,6 +208,8 @@ class HeatmapAnalyzer:
             vix_context: VIX regime, level, and guidance from VIXMonitor
             roc_summary: Rate of change state from RateOfChangeTracker
             confluence_state: Cross-index confluence state
+            regime: Market day type classification
+            scraped_data: Structured JSON from DOM scraper (all panels incl VIX)
         
         Returns: Full analysis dict with thesis, recommendation, confidence, etc.
         """
@@ -206,24 +217,69 @@ class HeatmapAnalyzer:
             print('[Analyzer] No Anthropic API key configured')
             return None
 
-        image_b64 = self._load_image(image_path)
-        if not image_b64:
-            return None
+        user_content = []
 
-        user_content = [
-            {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/png",
-                    "data": image_b64
-                }
-            },
-            {
+        # If we have scraped data, use it as primary input (much cheaper than vision)
+        # Include screenshot only as fallback/validation
+        if scraped_data and scraped_data.get('total_nodes', 0) > 0:
+            user_content.append({
+                "type": "text",
+                "text": (
+                    "Scraped heatmap data (structured JSON from DOM — primary data source):\n"
+                    f"{json.dumps(scraped_data, indent=2)}"
+                )
+            })
+
+            # Still include screenshot for visual validation if available
+            image_b64 = self._load_image(image_path) if image_path else None
+            if image_b64:
+                user_content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": image_b64
+                    }
+                })
+                user_content.append({
+                    "type": "text",
+                    "text": (
+                        "Above is the visual screenshot for reference. Use the structured JSON as your "
+                        "primary data source — it's more precise. Use the screenshot to verify visual "
+                        "patterns, color gradients, and any details the scraper might miss."
+                    )
+                })
+            else:
+                user_content.append({
+                    "type": "text",
+                    "text": "No screenshot available — analyze using the structured JSON data only."
+                })
+
+            user_content.append({
                 "type": "text",
                 "text": "Analyze this Heatseeker heatmap in detail. Provide your full assessment and trade recommendation."
-            }
-        ]
+            })
+        else:
+            # No scraped data — fall back to vision-only analysis
+            image_b64 = self._load_image(image_path)
+            if not image_b64:
+                print('[Analyzer] No image and no scraped data — cannot analyze')
+                return None
+
+            user_content.extend([
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": image_b64
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": "Analyze this Heatseeker heatmap in detail. Provide your full assessment and trade recommendation."
+                }
+            ])
 
         if market_context:
             user_content.append({
