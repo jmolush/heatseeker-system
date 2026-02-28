@@ -5,6 +5,7 @@
   "description": "Captures Heatseeker heatmap screenshots for automated analysis",
   "permissions": [
     "activeTab",
+    "scripting",
     "storage",
     "notifications",
     "alarms"

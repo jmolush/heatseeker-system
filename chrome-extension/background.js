@@ -70,15 +70,32 @@ async function captureTab() {
     let scrapedData = null;
     try {
       scrapedData = await chrome.tabs.sendMessage(tab.id, { action: 'getHeatmapData' });
-      if (scrapedData?.available && scrapedData?.data) {
-        console.log(`[Heatseeker] Scraped ${scrapedData.data.total_nodes} nodes from DOM`);
-      }
     } catch (err) {
-      console.warn('[Heatseeker] DOM scrape failed (content script may not be loaded):', err.message);
+      // Content script not loaded — inject it programmatically and retry
+      console.warn('[Heatseeker] Content script not loaded, injecting now...');
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content.js']
+        });
+        // Small delay to let the script initialize
+        await new Promise(r => setTimeout(r, 300));
+        scrapedData = await chrome.tabs.sendMessage(tab.id, { action: 'getHeatmapData' });
+      } catch (retryErr) {
+        console.warn('[Heatseeker] DOM scrape failed after injection:', retryErr.message);
+      }
+    }
+
+    if (scrapedData?.available && scrapedData?.data) {
+      console.log(`[Heatseeker] Scraped ${scrapedData.data.total_nodes} nodes from DOM`);
+    } else {
+      console.warn('[Heatseeker] No scraped data available');
+      scrapedData = null;
     }
 
     // Send to backend (screenshot + structured data)
-    const result = await sendToBackend(dataUrl, filename, dateStr, timestamp, scrapedData?.data);
+    const scraped = scrapedData?.available ? scrapedData.data : null;
+    const result = await sendToBackend(dataUrl, filename, dateStr, timestamp, scraped);
 
     // Update stats
     config.captureCountToday++;
