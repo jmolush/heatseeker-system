@@ -149,7 +149,7 @@ def receive_capture():
         # ── Auto-Analyze via Claude ────────────────────────────
         # Only triggers if best panel grades B+ or higher (50%+ intraday)
         # Threshold: B+ = 50% of max intraday score
-        ANALYSIS_MIN_GRADE_PCT = 50.0  # B+ threshold
+        ANALYSIS_MIN_GRADE_PCT = 60.0  # A threshold
 
         best_ticker = grade_results.get("best") if grade_results else None
         best_grade = grade_results.get(best_ticker) if best_ticker and grade_results else None
