@@ -275,14 +275,6 @@
 
     if (value === null) return null;
 
-    // Debug logging for high-value nodes to verify negative detection
-    if (Math.abs(value) > 1000000) {
-      const spanTexts = [...(valueSpans || [])].map(s => s.textContent.trim());
-      const cellTextDbg = valueCell ? valueCell.textContent.trim().substring(0, 30) : 'N/A';
-      const charCodes = cellTextDbg.substring(0, 5).split('').map(c => c.charCodeAt(0).toString(16));
-      console.log(`[Heatseeker Debug] Strike ${strike}: value=${value}, spanTexts=${JSON.stringify(spanTexts)}, cellText="${cellTextDbg}", firstCharCodes=[${charCodes}]`);
-    }
-
     // Background color — inline style on the row or a child
     const bgColor = extractBackgroundColor(row);
     const gammaType = classifyGamma(bgColor);
