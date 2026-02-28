@@ -270,8 +270,8 @@
   function parseDollarValue(str) {
     if (!str) return null;
 
-    // Clean up
-    let clean = str.replace(/[★*↑↓\s]/g, '').trim();
+    // Clean up — strip stars, arrows, quotes, whitespace
+    let clean = str.replace(/[★*↑↓\s"""'']/g, '').trim();
 
     // Detect negative (could be - or – or parentheses)
     let negative = false;
