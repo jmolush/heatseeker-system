@@ -228,11 +228,14 @@
     if (!strikeMatch) return null;
     const strike = parseFloat(strikeMatch[1]);
 
-    // Extract dollar value from tabular-nums spans or any span with $ values
+    // Extract dollar value from the value cell (flex-1 div) or tabular-nums spans
     let value = null;
     let valueDisplay = '';
 
-    // Try tabular-nums spans first (most reliable)
+    // Get the value cell — this contains the dollar amount and sign
+    const valueCell = row.querySelector('.flex-1, [class*="flex-1"]');
+    
+    // Try tabular-nums spans first (most reliable for the number)
     const valueSpans = row.querySelectorAll('.tabular-nums, [class*="tabular"]');
     for (const span of valueSpans) {
       const spanText = span.textContent.trim();
@@ -244,9 +247,21 @@
       }
     }
 
+    // If we got a value from tabular-nums but it's positive,
+    // check the full value cell text for a negative sign prefix
+    // (Skylit may put the - outside the tabular-nums span)
+    if (value !== null && value > 0 && valueCell) {
+      const cellText = valueCell.textContent.trim();
+      // Check if the cell text starts with a minus before the dollar value
+      if (/^[-–−]/.test(cellText)) {
+        value = -value;
+        valueDisplay = '-' + valueDisplay;
+      }
+    }
+
     // Fallback: scan all text for dollar pattern
     if (value === null) {
-      const dollarMatch = text.match(/([-–]?\$[\d,]+\.?\d*K?)\s*[★*]?/);
+      const dollarMatch = text.match(/([-–−]?\$[\d,]+\.?\d*K?)\s*[★*]?/);
       if (dollarMatch) {
         value = parseDollarValue(dollarMatch[1]);
         valueDisplay = dollarMatch[1];
@@ -285,11 +300,15 @@
     // Clean up — strip stars, arrows, quotes, whitespace
     let clean = str.replace(/[★*↑↓\s"""'']/g, '').trim();
 
-    // Detect negative (could be - or – or parentheses)
+    // Detect negative (could be -, –, −, or parentheses)
+    // U+002D hyphen-minus, U+2013 en-dash, U+2212 minus sign
     let negative = false;
-    if (/^[-–]/.test(clean)) {
+    if (/^[-–−]/.test(clean)) {
       negative = true;
-      clean = clean.replace(/^[-–]/, '');
+      clean = clean.replace(/^[-–−]+/, '');
+    } else if (/^\(.*\)$/.test(clean)) {
+      negative = true;
+      clean = clean.replace(/^\(/, '').replace(/\)$/, '');
     }
 
     // Remove dollar sign
@@ -315,31 +334,46 @@
   }
 
   /**
-   * Extract background color from the row element.
-   * The color is typically an inline style on the row itself.
+   * Extract the gamma background color from the value cell (not the row).
+   * 
+   * Row structure:
+   *   <div data-strike-index="95">          ← row (bg: rgb(10,10,10) = dark theme)
+   *     <div class="flex-shrink-0">         ← strike label (bg: rgb(10,10,10))
+   *     <div class="flex-1">               ← VALUE CELL — this has the gamma color!
+   *       <span class="tabular-nums">      ← dollar value
+   *
+   * We need the flex-1 child's background, NOT the row's.
    */
   function extractBackgroundColor(el) {
-    // Check inline style first (most common for Skylit rows)
-    if (el.style.backgroundColor) {
-      return el.style.backgroundColor;
+    // Target the value cell directly — it's the flex-1 child with the gamma color
+    const valueCell = el.querySelector('.flex-1, [class*="flex-1"]');
+    if (valueCell) {
+      // Check inline style first (Skylit sets it inline)
+      if (valueCell.style.backgroundColor) {
+        return valueCell.style.backgroundColor;
+      }
+      const computed = window.getComputedStyle(valueCell);
+      const bg = computed.backgroundColor;
+      if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+        return bg;
+      }
     }
 
-    // Check computed style
-    const computed = window.getComputedStyle(el);
-    const bg = computed.backgroundColor;
-    if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
-      return bg;
-    }
-
-    // Check immediate children for colored elements
+    // Fallback: check all children for any non-dark background
+    const darkBg = 'rgb(10, 10, 10)';
     for (const child of el.children) {
-      if (child.style.backgroundColor) {
+      if (child.style.backgroundColor && child.style.backgroundColor !== darkBg) {
         return child.style.backgroundColor;
       }
       const childBg = window.getComputedStyle(child).backgroundColor;
-      if (childBg && childBg !== 'rgba(0, 0, 0, 0)' && childBg !== 'transparent') {
+      if (childBg && childBg !== 'rgba(0, 0, 0, 0)' && childBg !== 'transparent' && childBg !== darkBg) {
         return childBg;
       }
+    }
+
+    // Last resort: row itself (but skip near-black theme colors)
+    if (el.style.backgroundColor && el.style.backgroundColor !== darkBg) {
+      return el.style.backgroundColor;
     }
 
     return null;
