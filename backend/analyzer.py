@@ -196,10 +196,17 @@ class HeatmapAnalyzer:
     def analyze(self, image_path: str, market_context: dict = None,
                 recent_analyses: list = None, vix_context: dict = None,
                 roc_summary: dict = None, confluence_state: dict = None,
-                regime: dict = None, scraped_data: dict = None) -> Optional[dict]:
+                regime: dict = None, scraped_data: dict = None,
+                grade_result: dict = None, direction: str = "LONG",
+                skip_if_low_grade: bool = True, min_grade_pct: float = 30.0) -> Optional[dict]:
         """
         Full analysis of a heatmap capture.
         Uses Sonnet for detailed pattern recognition and trade recommendation.
+        
+        Now integrates the quantitative grader:
+        - If grade_result is provided, uses it as pre-filter and context enrichment
+        - If scraped_data is provided but no grade_result, runs grader automatically
+        - If skip_if_low_grade=True and grade % < min_grade_pct, skips Claude analysis
         
         Args:
             image_path: Path to the heatmap screenshot
@@ -210,14 +217,84 @@ class HeatmapAnalyzer:
             confluence_state: Cross-index confluence state
             regime: Market day type classification
             scraped_data: Structured JSON from DOM scraper (all panels incl VIX)
+            grade_result: Pre-computed grade from grader (optional — computed if missing)
+            direction: LONG or SHORT (for grader)
+            skip_if_low_grade: Skip Claude if grade is too low (saves tokens)
+            min_grade_pct: Minimum intraday grade % to proceed (default 30%)
         
         Returns: Full analysis dict with thesis, recommendation, confidence, etc.
+                 Returns grade-only result (no Claude) if skipped due to low grade.
         """
+        # ── Grader Integration ─────────────────────────────────────
+        # Run grader if we have scraped data but no pre-computed grade
+        if scraped_data and not grade_result:
+            try:
+                from grader_adapter import grade_all_panels, should_analyze
+                all_grades = grade_all_panels(scraped_data, direction=direction)
+                # Use the best panel's grade as the primary result
+                best = all_grades.get("best")
+                if best and best in all_grades:
+                    grade_result = all_grades[best]
+                    grade_result["_all_panels"] = {
+                        k: v for k, v in all_grades.items()
+                        if k not in ("best", "summary")
+                    }
+            except Exception as e:
+                print(f'[Analyzer] Grader failed (non-fatal): {e}')
+
+        # Pre-filter: skip Claude if grade is too low (saves tokens)
+        if skip_if_low_grade and grade_result:
+            from grader_adapter import should_analyze
+            if not should_analyze(grade_result, min_pct=min_grade_pct):
+                print(f'[Analyzer] Skipping Claude — grade too low '
+                      f'({grade_result.get("intraday",{}).get("pct",0):.1f}% < {min_grade_pct}%)')
+                # Return grade-only result without spending Claude tokens
+                from grader import format_grade_report
+                return {
+                    "skipped_claude": True,
+                    "reason": f"Grade {grade_result['intraday']['pct']:.1f}% below threshold {min_grade_pct}%",
+                    "grade": grade_result,
+                    "grade_report": format_grade_report(grade_result),
+                    "recommendation": grade_result.get("action", {}),
+                    "_model": "grader_only",
+                    "_timestamp": datetime.now(timezone.utc).isoformat(),
+                    "_input_tokens": 0,
+                    "_output_tokens": 0,
+                }
+
         if not self.client:
             print('[Analyzer] No Anthropic API key configured')
+            # Still return grade if available
+            if grade_result:
+                from grader import format_grade_report
+                return {
+                    "skipped_claude": True,
+                    "reason": "No Anthropic API key",
+                    "grade": grade_result,
+                    "grade_report": format_grade_report(grade_result),
+                    "recommendation": grade_result.get("action", {}),
+                    "_model": "grader_only",
+                    "_timestamp": datetime.now(timezone.utc).isoformat(),
+                    "_input_tokens": 0,
+                    "_output_tokens": 0,
+                }
             return None
 
         user_content = []
+
+        # ── Grade Context for Claude ───────────────────────────────
+        # Prepend quantitative grade summary so Claude has structured data
+        if grade_result:
+            try:
+                from grader_adapter import grade_context_for_claude
+                grade_ctx = grade_context_for_claude(grade_result)
+                if grade_ctx:
+                    user_content.append({
+                        "type": "text",
+                        "text": grade_ctx,
+                    })
+            except Exception as e:
+                print(f'[Analyzer] Grade context formatting failed (non-fatal): {e}')
 
         # If we have scraped data, use it as primary input (much cheaper than vision)
         # Include screenshot only as fallback/validation
@@ -343,6 +420,11 @@ class HeatmapAnalyzer:
             result['_image'] = image_path
             result['_input_tokens'] = response.usage.input_tokens
             result['_output_tokens'] = response.usage.output_tokens
+
+            # Attach grade result if available
+            if grade_result:
+                result['grade'] = grade_result
+                result['skipped_claude'] = False
 
             self._analysis_log.append(result)
             return result

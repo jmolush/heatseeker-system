@@ -242,11 +242,11 @@ def grade_capture_endpoint():
     
     Expects JSON body with:
     - scraped_data: Full scraper output (all panels)
-    - ticker: Which panel to grade (default: SPY)
+    - ticker: Which panel to grade (default: SPY, or "all" for all panels)
     - direction: LONG or SHORT (default: LONG)
     - expiry: Option expiry date (optional, YYYY-MM-DD)
     """
-    from grader_adapter import grade_capture as do_grade
+    from grader_adapter import grade_capture as do_grade, grade_all_panels
     from grader import format_grade_report
 
     data = request.get_json()
@@ -257,6 +257,18 @@ def grade_capture_endpoint():
     direction = data.get('direction', 'LONG')
     expiry = data.get('expiry')
 
+    # Grade all panels at once
+    if ticker.lower() == 'all':
+        results = grade_all_panels(data['scraped_data'], direction=direction)
+        for t, r in results.items():
+            r['report'] = format_grade_report(r)
+        return jsonify({
+            'panels': results,
+            'count': len(results),
+            'escalate_any': any(r.get('escalate_to_claude') for r in results.values()),
+        })
+
+    # Grade single panel
     result = do_grade(data['scraped_data'], ticker=ticker, direction=direction, expiry=expiry)
     if not result:
         return jsonify({'error': f'Panel {ticker} not found in scraped data'}), 404
@@ -267,11 +279,11 @@ def grade_capture_endpoint():
 
 @app.route('/api/grade/latest', methods=['GET'])
 def grade_latest_capture():
-    """Grade the most recent capture for a given ticker."""
-    from grader_adapter import grade_capture as do_grade
+    """Grade the most recent capture — single ticker or all panels."""
+    from grader_adapter import grade_capture as do_grade, grade_all_panels
     from grader import format_grade_report
 
-    ticker = request.args.get('ticker', 'SPY')
+    ticker = request.args.get('ticker', 'all')
     direction = request.args.get('direction', 'LONG')
 
     # Find most recent capture with scraped data
@@ -281,13 +293,23 @@ def grade_latest_capture():
     if not date_folder.exists():
         return jsonify({'error': 'No captures today'}), 404
 
-    # Find latest _data.json
     data_files = sorted(date_folder.glob('*_data.json'), reverse=True)
     if not data_files:
         return jsonify({'error': 'No scraped data files found today'}), 404
 
     with open(str(data_files[0])) as f:
         scraped_data = json.load(f)
+
+    if ticker.lower() == 'all':
+        results = grade_all_panels(scraped_data, direction=direction)
+        for t, r in results.items():
+            r['report'] = format_grade_report(r)
+        return jsonify({
+            'panels': results,
+            'count': len(results),
+            'source_file': str(data_files[0]),
+            'escalate_any': any(r.get('escalate_to_claude') for r in results.values()),
+        })
 
     result = do_grade(scraped_data, ticker=ticker, direction=direction)
     if not result:
