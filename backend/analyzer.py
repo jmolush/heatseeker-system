@@ -9,7 +9,7 @@ Tiered approach:
 
 import base64
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -172,7 +172,7 @@ class HeatmapAnalyzer:
                 }
 
             result['_model'] = 'haiku'
-            result['_timestamp'] = datetime.utcnow().isoformat()
+            result['_timestamp'] = datetime.now(timezone.utc).isoformat()
             result['_image'] = image_path
             result['_input_tokens'] = response.usage.input_tokens
             result['_output_tokens'] = response.usage.output_tokens
@@ -283,7 +283,7 @@ class HeatmapAnalyzer:
                 }
 
             result['_model'] = 'sonnet'
-            result['_timestamp'] = datetime.utcnow().isoformat()
+            result['_timestamp'] = datetime.now(timezone.utc).isoformat()
             result['_image'] = image_path
             result['_input_tokens'] = response.usage.input_tokens
             result['_output_tokens'] = response.usage.output_tokens

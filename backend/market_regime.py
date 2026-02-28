@@ -24,7 +24,7 @@ Classification uses:
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -193,7 +193,7 @@ class MarketRegimeClassifier:
         - Reversal count (how many times direction changed)
         """
         candles = self._candles.get(symbol, [])
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         if not candles:
             return RegimeClassification(

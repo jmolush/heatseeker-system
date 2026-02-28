@@ -17,7 +17,7 @@ From Skylit docs:
 import json
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -443,7 +443,7 @@ class RateOfChangeTracker:
     def save_session(self, filepath: str):
         """Save all snapshot history and alerts to a JSON file."""
         data = {
-            'saved_at': datetime.utcnow().isoformat(),
+            'saved_at': datetime.now(timezone.utc).isoformat(),
             'snapshots': {
                 symbol: [s.to_dict() for s in snaps]
                 for symbol, snaps in self._snapshots.items()

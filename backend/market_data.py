@@ -7,7 +7,7 @@ Handles:
 """
 
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import yfinance as yf
@@ -54,7 +54,7 @@ class IndexDataProvider:
                 'open': float(info.open) if hasattr(info, 'open') else None,
                 'day_high': float(info.day_high) if hasattr(info, 'day_high') else None,
                 'day_low': float(info.day_low) if hasattr(info, 'day_low') else None,
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
             }
 
             # Calculate change
@@ -328,7 +328,7 @@ def get_market_context() -> dict:
     Returns VIX, SPX, and OpenD data in one dict.
     """
     context = {
-        'timestamp': datetime.utcnow().isoformat(),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
         'vix': index_data.get_vix(),
         'spx': index_data.get_spx(),
     }

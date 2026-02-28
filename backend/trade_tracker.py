@@ -6,7 +6,7 @@ Tracks win rate, P&L, pattern performance.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -17,8 +17,8 @@ class TradeRecord:
     """A single trade recommendation and its outcome."""
 
     def __init__(self, recommendation: dict):
-        self.id = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-        self.timestamp = datetime.utcnow().isoformat()
+        self.id = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+        self.timestamp = datetime.now(timezone.utc).isoformat()
         self.recommendation = recommendation
         self.status = 'pending'  # pending → entered → closed | expired | skipped
         self.entry_price = None
@@ -33,13 +33,13 @@ class TradeRecord:
 
     def enter(self, price: float, order_id: str = None):
         self.entry_price = price
-        self.entry_time = datetime.utcnow().isoformat()
+        self.entry_time = datetime.now(timezone.utc).isoformat()
         self.order_id = order_id
         self.status = 'entered'
 
     def close(self, price: float, fees: float = 0.0, notes: str = ''):
         self.exit_price = price
-        self.exit_time = datetime.utcnow().isoformat()
+        self.exit_time = datetime.now(timezone.utc).isoformat()
         self.fees = fees
         self.notes = notes
         self.status = 'closed'
@@ -92,7 +92,7 @@ class TradeTracker:
         self._load_today()
 
     def _log_file(self, date: str = None) -> Path:
-        date = date or datetime.utcnow().strftime('%Y-%m-%d')
+        date = date or datetime.now(timezone.utc).strftime('%Y-%m-%d')
         return self.log_dir / f'trades_{date}.json'
 
     def _load_today(self):

@@ -7,7 +7,7 @@ Runs on Justin's desktop, accessible via Tailscale.
 
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, request, jsonify
@@ -28,7 +28,7 @@ def health():
     """Health check endpoint."""
     return jsonify({
         'status': 'ok',
-        'timestamp': datetime.utcnow().isoformat(),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
         'capture_path': str(Config.CAPTURE_BASE_PATH),
         'version': '0.1.0'
     })
@@ -51,10 +51,10 @@ def receive_capture():
 
     image_file = request.files['image']
     # Default filename uses dashes instead of colons (Windows-safe)
-    default_name = f'capture_{datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")}.png'
+    default_name = f'capture_{datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")}.png'
     filename = request.form.get('filename', default_name)
-    date_str = request.form.get('date', datetime.utcnow().strftime('%Y-%m-%d'))
-    timestamp = request.form.get('timestamp', datetime.utcnow().isoformat())
+    date_str = request.form.get('date', datetime.now(timezone.utc).strftime('%Y-%m-%d'))
+    timestamp = request.form.get('timestamp', datetime.now(timezone.utc).isoformat())
     save_path_override = request.form.get('savePath', '')
 
     # Determine save location
@@ -93,7 +93,7 @@ def receive_capture():
 @app.route('/api/captures', methods=['GET'])
 def list_captures():
     """List captures, optionally filtered by date."""
-    date_str = request.args.get('date', datetime.utcnow().strftime('%Y-%m-%d'))
+    date_str = request.args.get('date', datetime.now(timezone.utc).strftime('%Y-%m-%d'))
     base_path = Config.CAPTURE_BASE_PATH
     date_folder = base_path / date_str
 
@@ -277,7 +277,7 @@ def status():
     return jsonify({
         'status': 'ok',
         'version': '0.1.0',
-        'timestamp': datetime.utcnow().isoformat(),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
         'capture_path': str(base_path),
         'capture_path_exists': base_path.exists(),
         'total_captures': total_captures,

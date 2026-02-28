@@ -9,7 +9,7 @@ whether there's alignment for high-confidence trades.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -175,7 +175,7 @@ class ConfluenceDetector:
         - bias, confidence, king_node, pattern, etc.
         """
         state = IndexState(symbol=symbol)
-        state.timestamp = analysis.get('_timestamp', datetime.utcnow().isoformat())
+        state.timestamp = analysis.get('_timestamp', datetime.now(timezone.utc).isoformat())
 
         # Bias
         bias_str = analysis.get('bias', analysis.get('overall_bias', 'unclear')).lower()
@@ -223,7 +223,7 @@ class ConfluenceDetector:
         
         Returns a ConfluenceResult with trade eligibility.
         """
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         spx = self._states.get('SPX') or self._states.get('SPXW')
         spy = self._states.get('SPY')

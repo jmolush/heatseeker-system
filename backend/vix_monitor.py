@@ -21,7 +21,7 @@ Key VIX behaviors:
 """
 
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from market_data import index_data
@@ -83,7 +83,7 @@ class VIXMonitor:
         is_spike = abs(intraday_change_pct) >= self.SPIKE_THRESHOLD
 
         reading = {
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'price': price,
             'previous_close': prev_close,
             'open': vix.get('open'),
