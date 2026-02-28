@@ -247,15 +247,20 @@
       }
     }
 
-    // If we got a value from tabular-nums but it's positive,
-    // check the full value cell text for a negative sign prefix
-    // (Skylit may put the - outside the tabular-nums span)
-    if (value !== null && value > 0 && valueCell) {
+    // Double-check: if value is positive, look at the full value cell text
+    // The minus sign might be outside the tabular-nums span, or the span's
+    // textContent might not include it due to DOM structure
+    if (value !== null && value >= 0 && valueCell) {
       const cellText = valueCell.textContent.trim();
-      // Check if the cell text starts with a minus before the dollar value
-      if (/^[-–−]/.test(cellText)) {
-        value = -value;
-        valueDisplay = '-' + valueDisplay;
+      // Look for ANY negative indicator before or near the dollar amount
+      // Check first few chars for minus-like characters
+      const firstChars = cellText.substring(0, 5);
+      const hasNegative = /[-–−\u2212\u2010\u2011\u2012\u2013\u2014\u2015]/.test(firstChars);
+      if (hasNegative) {
+        value = -Math.abs(value);
+        if (!valueDisplay.startsWith('-')) {
+          valueDisplay = '-' + valueDisplay;
+        }
       }
     }
 
@@ -269,6 +274,14 @@
     }
 
     if (value === null) return null;
+
+    // Debug logging for high-value nodes to verify negative detection
+    if (Math.abs(value) > 1000000) {
+      const spanTexts = [...(valueSpans || [])].map(s => s.textContent.trim());
+      const cellTextDbg = valueCell ? valueCell.textContent.trim().substring(0, 30) : 'N/A';
+      const charCodes = cellTextDbg.substring(0, 5).split('').map(c => c.charCodeAt(0).toString(16));
+      console.log(`[Heatseeker Debug] Strike ${strike}: value=${value}, spanTexts=${JSON.stringify(spanTexts)}, cellText="${cellTextDbg}", firstCharCodes=[${charCodes}]`);
+    }
 
     // Background color — inline style on the row or a child
     const bgColor = extractBackgroundColor(row);
@@ -300,12 +313,14 @@
     // Clean up — strip stars, arrows, quotes, whitespace
     let clean = str.replace(/[★*↑↓\s"""'']/g, '').trim();
 
-    // Detect negative (could be -, –, −, or parentheses)
-    // U+002D hyphen-minus, U+2013 en-dash, U+2212 minus sign
+    // Detect negative — handle every known minus-like character:
+    // U+002D hyphen-minus, U+2010 hyphen, U+2011 non-breaking hyphen,
+    // U+2012 figure dash, U+2013 en-dash, U+2014 em-dash, U+2015 horizontal bar,
+    // U+2212 minus sign, U+FE63 small hyphen-minus, U+FF0D fullwidth hyphen-minus
     let negative = false;
-    if (/^[-–−]/.test(clean)) {
+    if (/^[\-–—−‐‑‒\u2212\uFE63\uFF0D]/.test(clean)) {
       negative = true;
-      clean = clean.replace(/^[-–−]+/, '');
+      clean = clean.replace(/^[\-–—−‐‑‒\u2212\uFE63\uFF0D]+/, '');
     } else if (/^\(.*\)$/.test(clean)) {
       negative = true;
       clean = clean.replace(/^\(/, '').replace(/\)$/, '');
