@@ -233,6 +233,71 @@ def get_confluence_trend():
     return jsonify(trend)
 
 
+# ─── Grader Endpoints ─────────────────────────────────────────────
+
+@app.route('/api/grade', methods=['POST'])
+def grade_capture_endpoint():
+    """
+    Grade a capture using the quantitative dual-timeframe grader.
+    
+    Expects JSON body with:
+    - scraped_data: Full scraper output (all panels)
+    - ticker: Which panel to grade (default: SPY)
+    - direction: LONG or SHORT (default: LONG)
+    - expiry: Option expiry date (optional, YYYY-MM-DD)
+    """
+    from grader_adapter import grade_capture as do_grade
+    from grader import format_grade_report
+
+    data = request.get_json()
+    if not data or 'scraped_data' not in data:
+        return jsonify({'error': 'scraped_data required'}), 400
+
+    ticker = data.get('ticker', 'SPY')
+    direction = data.get('direction', 'LONG')
+    expiry = data.get('expiry')
+
+    result = do_grade(data['scraped_data'], ticker=ticker, direction=direction, expiry=expiry)
+    if not result:
+        return jsonify({'error': f'Panel {ticker} not found in scraped data'}), 404
+
+    result['report'] = format_grade_report(result)
+    return jsonify(result)
+
+
+@app.route('/api/grade/latest', methods=['GET'])
+def grade_latest_capture():
+    """Grade the most recent capture for a given ticker."""
+    from grader_adapter import grade_capture as do_grade
+    from grader import format_grade_report
+
+    ticker = request.args.get('ticker', 'SPY')
+    direction = request.args.get('direction', 'LONG')
+
+    # Find most recent capture with scraped data
+    date_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    date_folder = Config.CAPTURE_BASE_PATH / date_str
+
+    if not date_folder.exists():
+        return jsonify({'error': 'No captures today'}), 404
+
+    # Find latest _data.json
+    data_files = sorted(date_folder.glob('*_data.json'), reverse=True)
+    if not data_files:
+        return jsonify({'error': 'No scraped data files found today'}), 404
+
+    with open(str(data_files[0])) as f:
+        scraped_data = json.load(f)
+
+    result = do_grade(scraped_data, ticker=ticker, direction=direction)
+    if not result:
+        return jsonify({'error': f'Panel {ticker} not found'}), 404
+
+    result['report'] = format_grade_report(result)
+    result['source_file'] = str(data_files[0])
+    return jsonify(result)
+
+
 # ─── Rate of Change Endpoints ────────────────────────────────────
 
 @app.route('/api/roc/alerts', methods=['GET'])
