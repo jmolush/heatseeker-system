@@ -9,141 +9,160 @@
 
   /**
    * Scrape all visible heatmap panels from Trinity Mode or single view.
-   * Returns structured JSON with strike prices, values, colors, and metadata.
+   * 
+   * DOM structure (as of Feb 2026):
+   * - Each node row has a `data-strike-index` attribute
+   * - Rows have inline `background-color: rgb(r, g, b)` for gamma coloring
+   * - Dollar values are in <span class="tabular-nums"> with font-weight 700
+   * - King nodes have a lucide-star SVG icon
+   * - Strike prices are text content in the row
+   * - Panels are identified by ticker labels (SPXW, SPY, QQQ)
    */
   function scrapeHeatmapData() {
-    const panels = [];
-    
-    // Each panel in Trinity Mode is a distinct column with its own ticker header
-    // Look for the panel containers — adjust selectors based on actual DOM structure
-    
-    // Strategy: find all elements that look like heatmap panels
-    // Each panel has: ticker label, price, king indicator, and rows of strike data
-    
-    // Try to find panel headers (SPXW, SPY, QQQ labels with prices)
-    const panelHeaders = document.querySelectorAll('[class*="panel"], [class*="heatmap"], [class*="column"]');
-    
-    // Fallback: scan the entire page for structured data
     const result = {
       timestamp: new Date().toISOString(),
       url: window.location.href,
       mode: detectMode(),
       panels: [],
-      raw_scrape: null,
+      panel_count: 0,
+      total_nodes: 0,
     };
 
-    // Approach 1: Try to find panel containers by structure
-    // Each Trinity panel typically has a header with ticker + price, then a scrollable body with rows
-    const tickerLabels = findTickerLabels();
-    
-    if (tickerLabels.length > 0) {
-      for (const label of tickerLabels) {
-        const panel = scrapePanel(label);
-        if (panel && panel.nodes.length > 0) {
-          result.panels.push(panel);
-        }
-      }
-    }
+    // Find all ticker panels by looking for ticker header elements
+    const panels = findPanels();
 
-    // Approach 2: If structured scraping didn't find much, do a brute-force text scan
-    if (result.panels.length === 0 || result.panels.every(p => p.nodes.length === 0)) {
-      console.log('[Heatseeker] Structured scraping found nothing, trying text scan...');
-      result.raw_scrape = bruteForceTextScan();
+    for (const panelInfo of panels) {
+      const panel = scrapePanel(panelInfo);
+      if (panel) {
+        result.panels.push(panel);
+      }
     }
 
     result.panel_count = result.panels.length;
     result.total_nodes = result.panels.reduce((sum, p) => sum + p.nodes.length, 0);
-    
+
     console.log(`[Heatseeker] Scraped ${result.panel_count} panels, ${result.total_nodes} total nodes`);
     return result;
   }
 
   /**
-   * Detect what mode Skylit is in (Trinity, single, etc.)
+   * Detect what mode Skylit is in.
    */
   function detectMode() {
-    const bodyText = document.body.innerText;
-    if (bodyText.includes('TRINITY') || bodyText.includes('3 panels')) {
-      return 'trinity';
-    }
+    const text = document.body.innerText;
+    if (text.includes('TRINITY') || text.includes('3 panels')) return 'trinity';
+    if (text.includes('2 panels')) return 'dual';
     return 'single';
   }
 
   /**
-   * Find ticker label elements (SPXW, SPY, QQQ, etc.)
-   * These are the starting points for scraping each panel.
+   * Find panel containers. In Trinity Mode there are 3 side-by-side panels.
+   * Each panel has a ticker header (SPXW, SPY, QQQ) with price info.
    */
-  function findTickerLabels() {
-    const tickers = ['SPXW', 'SPY', 'QQQ', 'IWM', 'VIX'];
-    const found = [];
+  function findPanels() {
+    const panels = [];
+    const tickers = ['SPXW', 'SPY', 'QQQ', 'IWM', 'VIX', 'NDX', 'RUT'];
 
-    // Look for elements containing ticker text
-    // Could be buttons, spans, divs — varies by Skylit's UI version
+    // Find all elements that contain just a ticker name
+    // These are typically buttons or spans in the panel header
     const allElements = document.querySelectorAll('button, span, div, select');
-    
+
     for (const el of allElements) {
       const text = el.textContent.trim();
-      if (tickers.includes(text) && el.offsetParent !== null) {
-        // Verify this looks like a panel header (has price nearby)
-        const parent = el.closest('[class*="panel"], [class*="column"], [class*="grid"]') || el.parentElement?.parentElement?.parentElement;
-        if (parent) {
-          found.push({
-            ticker: text,
-            element: el,
-            container: parent,
-          });
-        }
-      }
+      if (!tickers.includes(text)) continue;
+      if (!el.offsetParent) continue; // Skip hidden elements
+
+      // Walk up to find the panel container
+      // The panel container holds both the header and all the node rows
+      let container = findPanelContainer(el);
+      if (!container) continue;
+
+      // Avoid duplicates
+      if (panels.some(p => p.container === container)) continue;
+
+      panels.push({
+        ticker: text,
+        headerElement: el,
+        container: container,
+      });
     }
 
-    // Deduplicate by ticker
-    const seen = new Set();
-    return found.filter(f => {
-      if (seen.has(f.ticker)) return false;
-      seen.add(f.ticker);
-      return true;
-    });
+    return panels;
   }
 
   /**
-   * Scrape a single panel's data given its ticker label element.
+   * Walk up from a ticker label to find the panel container.
+   * The container is the element that holds both the header and all data-strike-index rows.
    */
-  function scrapePanel(labelInfo) {
-    const { ticker, element, container } = labelInfo;
-    
+  function findPanelContainer(el) {
+    let current = el.parentElement;
+    for (let i = 0; i < 15 && current; i++) {
+      // Check if this element contains data-strike-index rows
+      const rows = current.querySelectorAll('[data-strike-index]');
+      if (rows.length > 10) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  }
+
+  /**
+   * Scrape a single panel's data.
+   */
+  function scrapePanel(panelInfo) {
+    const { ticker, headerElement, container } = panelInfo;
+
     const panel = {
       ticker: ticker,
       price: null,
-      change: null,
       change_pct: null,
       king_pct: null,
       nodes: [],
+      node_count: 0,
+      king_node: null,
     };
 
-    // Find price near the ticker label
-    // Look for elements with $ values or decimal numbers near the label
-    const headerArea = element.closest('[class*="header"], [class*="top"]') || container;
-    if (headerArea) {
-      const priceMatch = headerArea.textContent.match(/\$?([\d,]+\.\d{2})/);
-      if (priceMatch) {
-        panel.price = parseFloat(priceMatch[1].replace(',', ''));
-      }
+    // ─── Header Info ─────────────────────────────────────
+    // Look in the area around the ticker label for price and change%
+    let headerArea = headerElement;
+    for (let i = 0; i < 5; i++) {
+      headerArea = headerArea.parentElement;
+      if (!headerArea) break;
+      const text = headerArea.textContent;
       
-      const changeMatch = headerArea.textContent.match(/([-+]?\d+\.\d+%)/);
-      if (changeMatch) {
-        panel.change_pct = changeMatch[1];
+      // Look for price pattern: $X,XXX.XX or XXXX.XX
+      if (!panel.price) {
+        const priceMatch = text.match(/\$?([\d,]+\.\d{2})\b/);
+        if (priceMatch) {
+          panel.price = parseFloat(priceMatch[1].replace(/,/g, ''));
+        }
       }
 
-      const kingMatch = headerArea.textContent.match(/King\s+([\d.]+%?\s*[↑↓]?)/i);
-      if (kingMatch) {
-        panel.king_pct = kingMatch[1].trim();
+      // Change percentage
+      if (!panel.change_pct) {
+        const changeMatch = text.match(/([-+]?\d+\.\d+)%/);
+        if (changeMatch) {
+          panel.change_pct = parseFloat(changeMatch[1]);
+        }
       }
+
+      // King percentage (shown as "King X.X% ↑/↓")
+      if (!panel.king_pct) {
+        const kingMatch = text.match(/King\s+([\d.]+)%?\s*([↑↓]?)/i);
+        if (kingMatch) {
+          panel.king_pct = kingMatch[1] + '%' + (kingMatch[2] || '');
+        }
+      }
+
+      // Don't go beyond the panel container
+      if (headerArea === container) break;
     }
 
-    // Find node rows — each row has a strike price and a dollar value
-    // Look for all text content that matches the pattern: number + $value
-    const rows = findNodeRows(container);
-    
+    // ─── Node Rows ───────────────────────────────────────
+    // Each row has data-strike-index attribute
+    const rows = container.querySelectorAll('[data-strike-index]');
+
     for (const row of rows) {
       const node = parseNodeRow(row);
       if (node) {
@@ -151,186 +170,226 @@
       }
     }
 
-    // Sort by strike descending (highest at top, matching visual layout)
+    // Sort by strike descending (highest first)
     panel.nodes.sort((a, b) => b.strike - a.strike);
+    panel.node_count = panel.nodes.length;
+
+    // Identify king node (highest absolute value, or marked with star)
+    const starNode = panel.nodes.find(n => n.is_king);
+    if (starNode) {
+      panel.king_node = {
+        strike: starNode.strike,
+        value: starNode.value,
+        gamma_type: starNode.gamma_type,
+      };
+    } else if (panel.nodes.length > 0) {
+      // Fallback: highest absolute value
+      const biggest = panel.nodes.reduce((max, n) =>
+        Math.abs(n.value) > Math.abs(max.value) ? n : max
+      );
+      panel.king_node = {
+        strike: biggest.strike,
+        value: biggest.value,
+        gamma_type: biggest.gamma_type,
+      };
+    }
 
     return panel;
   }
 
   /**
-   * Find elements that look like heatmap node rows.
-   * Each row typically has: strike number | colored bar | dollar value
+   * Parse a single node row element into structured data.
+   * 
+   * Row structure:
+   * - data-strike-index="XX" attribute
+   * - Inline background-color style for gamma coloring
+   * - <span class="tabular-nums" style="font-weight: 700"> for dollar value
+   * - SVG with lucide-star class for King marker
+   * - Strike price as text content
    */
-  function findNodeRows(container) {
-    if (!container) return [];
+  function parseNodeRow(row) {
+    const text = row.textContent.trim();
+    const strikeIndex = row.getAttribute('data-strike-index');
 
-    // Strategy: find all elements that contain a dollar value pattern
-    const candidates = [];
-    const allElements = container.querySelectorAll('div, span, td, tr, li');
+    // Extract strike price — typically a 3-5 digit number
+    const strikeMatch = text.match(/\b(\d{3,5})\b/);
+    if (!strikeMatch) return null;
+    const strike = parseInt(strikeMatch[1]);
 
-    for (const el of allElements) {
-      const text = el.textContent.trim();
-      
-      // Match patterns like "$1,234.5K" or "-$456.7K" or "$22,821.9K★"
-      if (/[-]?\$[\d,]+\.?\d*K?\*?★?/.test(text)) {
-        // Make sure this element also has a strike price (4-digit number)
-        if (/\b\d{3,5}\b/.test(text)) {
-          candidates.push(el);
-        }
+    // Extract dollar value from tabular-nums spans or any span with $ values
+    let value = null;
+    let valueDisplay = '';
+
+    // Try tabular-nums spans first (most reliable)
+    const valueSpans = row.querySelectorAll('.tabular-nums, [class*="tabular"]');
+    for (const span of valueSpans) {
+      const spanText = span.textContent.trim();
+      const parsed = parseDollarValue(spanText);
+      if (parsed !== null) {
+        value = parsed;
+        valueDisplay = spanText;
+        break;
       }
     }
 
-    // Deduplicate — prefer the most specific (smallest) elements
-    // Filter out parents of other candidates
-    const filtered = candidates.filter(el => {
-      return !candidates.some(other => other !== el && el.contains(other));
-    });
-
-    return filtered;
-  }
-
-  /**
-   * Parse a single node row element into structured data.
-   */
-  function parseNodeRow(element) {
-    const text = element.textContent.trim();
-    
-    // Extract strike price (3-5 digit number, typically the first number in the row)
-    const strikeMatch = text.match(/\b(\d{3,5})\b/);
-    if (!strikeMatch) return null;
-    
-    const strike = parseInt(strikeMatch[1]);
-
-    // Extract dollar value — could be positive or negative
-    // Patterns: $1,234.5K, -$456.7K, $22,821.9K★
-    const valueMatch = text.match(/([-]?)\$?([\d,]+\.?\d*)K?\*?★?/);
-    if (!valueMatch) return null;
-
-    const sign = valueMatch[1] === '-' ? -1 : 1;
-    let rawValue = parseFloat(valueMatch[2].replace(',', ''));
-    
-    // If the text had "K", multiply by 1000
-    if (/K/i.test(text)) {
-      rawValue *= 1000;
+    // Fallback: scan all text for dollar pattern
+    if (value === null) {
+      const dollarMatch = text.match(/([-–]?\$[\d,]+\.?\d*K?)\s*[★*]?/);
+      if (dollarMatch) {
+        value = parseDollarValue(dollarMatch[1]);
+        valueDisplay = dollarMatch[1];
+      }
     }
-    
-    const value = sign * rawValue;
 
-    // Determine gamma type from color
-    // Positive gamma: green/yellow hues | Negative gamma: blue/purple hues
-    const bgColor = getComputedBackgroundColor(element);
-    const gammaType = classifyGammaFromColor(bgColor);
+    if (value === null) return null;
 
-    // Check if this is a King node (★ marker or highest value)
-    const isKing = /★|\*/.test(text);
+    // Background color — inline style on the row or a child
+    const bgColor = extractBackgroundColor(row);
+    const gammaType = classifyGamma(bgColor);
+
+    // King node marker — look for star SVG (lucide-star class)
+    const hasStar = row.querySelector('[class*="lucide-star"], .lucide-star') !== null;
+    // Also check for ★ or * character after the value
+    const isKing = hasStar || /[★*]/.test(text.slice(text.indexOf('$')));
 
     return {
       strike: strike,
+      strike_index: strikeIndex ? parseInt(strikeIndex) : null,
       value: value,
-      value_display: valueMatch[0],
+      value_display: valueDisplay,
       gamma_type: gammaType,
       is_king: isKing,
-      bg_color: bgColor,
+      bg_color_rgb: bgColor,
     };
   }
 
   /**
-   * Get the effective background color of an element or its colored bar child.
+   * Parse a dollar value string into a number.
+   * Handles: $1,234.5K, -$456.7K, $22,821.9K★, -$3,951.9K★
    */
-  function getComputedBackgroundColor(element) {
-    // The color bar might be a child element
-    const colorBar = element.querySelector('[class*="bar"], [class*="cell"], [class*="fill"], [style*="background"]');
-    const target = colorBar || element;
-    
-    const style = window.getComputedStyle(target);
-    const bg = style.backgroundColor;
-    
+  function parseDollarValue(str) {
+    if (!str) return null;
+
+    // Clean up
+    let clean = str.replace(/[★*↑↓\s]/g, '').trim();
+
+    // Detect negative (could be - or – or parentheses)
+    let negative = false;
+    if (/^[-–]/.test(clean)) {
+      negative = true;
+      clean = clean.replace(/^[-–]/, '');
+    }
+
+    // Remove dollar sign
+    clean = clean.replace(/\$/, '');
+
+    // Check for K suffix (thousands)
+    let multiplier = 1;
+    if (/K$/i.test(clean)) {
+      multiplier = 1000;
+      clean = clean.replace(/K$/i, '');
+    } else if (/M$/i.test(clean)) {
+      multiplier = 1000000;
+      clean = clean.replace(/M$/i, '');
+    }
+
+    // Remove commas
+    clean = clean.replace(/,/g, '');
+
+    const num = parseFloat(clean);
+    if (isNaN(num)) return null;
+
+    return (negative ? -1 : 1) * num * multiplier;
+  }
+
+  /**
+   * Extract background color from the row element.
+   * The color is typically an inline style on the row itself.
+   */
+  function extractBackgroundColor(el) {
+    // Check inline style first (most common for Skylit rows)
+    if (el.style.backgroundColor) {
+      return el.style.backgroundColor;
+    }
+
+    // Check computed style
+    const computed = window.getComputedStyle(el);
+    const bg = computed.backgroundColor;
     if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
       return bg;
     }
 
-    // Walk up parents to find the colored container
-    let parent = element.parentElement;
-    for (let i = 0; i < 3 && parent; i++) {
-      const parentBg = window.getComputedStyle(parent).backgroundColor;
-      if (parentBg && parentBg !== 'rgba(0, 0, 0, 0)' && parentBg !== 'transparent') {
-        return parentBg;
+    // Check immediate children for colored elements
+    for (const child of el.children) {
+      if (child.style.backgroundColor) {
+        return child.style.backgroundColor;
       }
-      parent = parent.parentElement;
+      const childBg = window.getComputedStyle(child).backgroundColor;
+      if (childBg && childBg !== 'rgba(0, 0, 0, 0)' && childBg !== 'transparent') {
+        return childBg;
+      }
     }
 
     return null;
   }
 
   /**
-   * Classify gamma type (positive/negative) from an RGB color string.
-   * Green/yellow = positive gamma, Blue/purple = negative gamma
+   * Classify gamma type from RGB color.
+   * 
+   * From the screenshot:
+   * - Bright green (rgb(121, 206, 79)) = strong positive gamma
+   * - Dark green/teal = moderate positive gamma
+   * - Dark blue/purple = negative gamma
+   * - The brighter/more saturated, the stronger the value
    */
-  function classifyGammaFromColor(colorStr) {
+  function classifyGamma(colorStr) {
     if (!colorStr) return 'unknown';
 
-    // Parse rgb(r, g, b) or rgba(r, g, b, a)
-    const match = colorStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+    const match = colorStr.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
     if (!match) return 'unknown';
 
     const r = parseInt(match[1]);
     const g = parseInt(match[2]);
     const b = parseInt(match[3]);
 
-    // Simple heuristic:
-    // Green/yellow dominant = positive gamma (absorption)
-    // Blue/purple dominant = negative gamma (amplification)
-    
-    if (g > r && g > b) return 'positive';       // Green dominant
-    if (r > 150 && g > 150 && b < 100) return 'positive'; // Yellow
-    if (b > r && b > g) return 'negative';        // Blue dominant
-    if (r > 100 && b > 100 && g < 100) return 'negative'; // Purple
-    
-    // Edge cases
-    if (g > 100 && b > 100 && r < 80) return 'positive';  // Teal/cyan → positive
-    if (r > g && r > b) return 'negative';         // Red-ish → likely negative
+    // Convert to HSL for better classification
+    const { h, s, l } = rgbToHsl(r, g, b);
+
+    // Green/yellow hues (60-180) = positive gamma (absorption/pinning)
+    // Blue/purple hues (180-300) = negative gamma (amplification)
+    if (h >= 60 && h <= 180) return 'positive';
+    if (h >= 180 && h <= 300) return 'negative';
+    if (h < 60 && h >= 30) return 'positive';  // Yellow-green
+    if (h > 300) return 'negative';              // Magenta/red-purple
+
+    // Low saturation = near the boundary
+    if (s < 0.15) return 'neutral';
 
     return 'unknown';
   }
 
   /**
-   * Brute-force text scan fallback.
-   * Extracts all visible text that looks like heatmap data.
+   * Convert RGB to HSL.
    */
-  function bruteForceTextScan() {
-    const body = document.body.innerText;
-    const lines = body.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-    
-    const data = {
-      tickers_found: [],
-      potential_nodes: [],
-      raw_lines: [],
-    };
+  function rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    let h, s, l = (max + min) / 2;
 
-    const tickerPattern = /^(SPXW|SPY|QQQ|IWM|VIX)\b/;
-    const nodePattern = /(\d{3,5})\s+([-]?\$[\d,]+\.?\d*K?\*?★?)/;
-
-    for (const line of lines) {
-      if (tickerPattern.test(line)) {
-        data.tickers_found.push(line.substring(0, 100));
-      }
-
-      const nodeMatch = line.match(nodePattern);
-      if (nodeMatch) {
-        data.potential_nodes.push({
-          strike: parseInt(nodeMatch[1]),
-          value_text: nodeMatch[2],
-          full_line: line.substring(0, 150),
-        });
-      }
-
-      // Keep lines that look like they contain heatmap data
-      if (/\d{3,5}.*\$/.test(line)) {
-        data.raw_lines.push(line.substring(0, 200));
+    if (max === min) {
+      h = s = 0;
+    } else {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+        case g: h = ((b - r) / d + 2) / 6; break;
+        case b: h = ((r - g) / d + 4) / 6; break;
       }
     }
 
-    return data;
+    return { h: h * 360, s, l };
   }
 
 
@@ -342,7 +401,7 @@
         sendResponse({
           url: window.location.href,
           title: document.title,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
         break;
 
@@ -352,10 +411,7 @@
           sendResponse({ available: true, data: data });
         } catch (err) {
           console.error('[Heatseeker] Scrape error:', err);
-          sendResponse({ 
-            available: false, 
-            error: err.message 
-          });
+          sendResponse({ available: false, error: err.message });
         }
         break;
 
