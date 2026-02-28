@@ -56,6 +56,15 @@ def receive_capture():
     date_str = request.form.get('date', datetime.now(timezone.utc).strftime('%Y-%m-%d'))
     timestamp = request.form.get('timestamp', datetime.now(timezone.utc).isoformat())
     save_path_override = request.form.get('savePath', '')
+    scraped_data_raw = request.form.get('scraped_data', '')
+
+    # Parse scraped DOM data if provided
+    scraped_data = None
+    if scraped_data_raw:
+        try:
+            scraped_data = json.loads(scraped_data_raw)
+        except json.JSONDecodeError:
+            print('[Capture] Warning: could not parse scraped_data JSON')
 
     # Determine save location
     base_path = Path(save_path_override) if save_path_override else Config.CAPTURE_BASE_PATH
@@ -73,13 +82,23 @@ def receive_capture():
         'date': date_str,
         'file_size': os.path.getsize(str(file_path)),
         'save_path': str(file_path),
+        'has_scraped_data': scraped_data is not None,
     }
 
     meta_path = date_folder / f'{Path(filename).stem}.json'
     with open(str(meta_path), 'w') as f:
         json.dump(meta, f, indent=2)
 
-    print(f'[Capture] Saved: {file_path} ({meta["file_size"]} bytes)')
+    # Save scraped DOM data separately (this is the cheap-to-analyze version)
+    if scraped_data:
+        scraped_path = date_folder / f'{Path(filename).stem}_data.json'
+        with open(str(scraped_path), 'w') as f:
+            json.dump(scraped_data, f, indent=2)
+        node_count = scraped_data.get('total_nodes', 0)
+        panel_count = scraped_data.get('panel_count', 0)
+        print(f'[Capture] Saved: {file_path} ({meta["file_size"]} bytes) + scraped data ({panel_count} panels, {node_count} nodes)')
+    else:
+        print(f'[Capture] Saved: {file_path} ({meta["file_size"]} bytes) [screenshot only, no DOM data]')
 
     return jsonify({
         'status': 'ok',

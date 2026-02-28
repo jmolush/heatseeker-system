@@ -66,8 +66,19 @@ async function captureTab() {
     const timeStr = timestamp.toISOString().split('T')[1].replace(/:/g, '-').split('.')[0]; // HH-MM-SS
     const filename = `heatseeker_${dateStr}_${timeStr}.png`;
 
-    // Send to backend
-    const result = await sendToBackend(dataUrl, filename, dateStr, timestamp);
+    // Try to scrape structured data from the DOM (much cheaper than vision tokens)
+    let scrapedData = null;
+    try {
+      scrapedData = await chrome.tabs.sendMessage(tab.id, { action: 'getHeatmapData' });
+      if (scrapedData?.available && scrapedData?.data) {
+        console.log(`[Heatseeker] Scraped ${scrapedData.data.total_nodes} nodes from DOM`);
+      }
+    } catch (err) {
+      console.warn('[Heatseeker] DOM scrape failed (content script may not be loaded):', err.message);
+    }
+
+    // Send to backend (screenshot + structured data)
+    const result = await sendToBackend(dataUrl, filename, dateStr, timestamp, scrapedData?.data);
 
     // Update stats
     config.captureCountToday++;
@@ -94,7 +105,7 @@ async function captureTab() {
   }
 }
 
-async function sendToBackend(dataUrl, filename, dateSubfolder, timestamp) {
+async function sendToBackend(dataUrl, filename, dateSubfolder, timestamp, scrapedData = null) {
   if (!config.backendUrl) {
     console.warn('[Heatseeker] No backend URL configured');
     return { error: 'No backend URL configured' };
@@ -111,6 +122,9 @@ async function sendToBackend(dataUrl, filename, dateSubfolder, timestamp) {
     formData.append('date', dateSubfolder);
     formData.append('timestamp', timestamp.toISOString());
     formData.append('savePath', config.savePath);
+    if (scrapedData) {
+      formData.append('scraped_data', JSON.stringify(scrapedData));
+    }
 
     const result = await fetch(`${config.backendUrl}/api/capture`, {
       method: 'POST',
