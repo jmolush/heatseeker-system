@@ -50,14 +50,22 @@
    */
   function detectMode() {
     const text = document.body.innerText;
-    if (text.includes('TRINITY') || text.includes('3 panels')) return 'trinity';
-    if (text.includes('2 panels')) return 'dual';
+    // Skylit header shows "TRINITY X panels" — extract count
+    const panelMatch = text.match(/(\d+)\s*panels?/i);
+    if (panelMatch) {
+      const count = parseInt(panelMatch[1]);
+      if (count >= 4) return 'trinity_plus';  // Trinity + VIX
+      if (count === 3) return 'trinity';
+      if (count === 2) return 'dual';
+    }
+    if (text.includes('TRINITY')) return 'trinity';
     return 'single';
   }
 
   /**
-   * Find panel containers. In Trinity Mode there are 3 side-by-side panels.
-   * Each panel has a ticker header (SPXW, SPY, QQQ) with price info.
+   * Find panel containers. In Trinity Mode there are 3-4 side-by-side panels.
+   * Standard: SPXW, SPY, QQQ. With VIX gamma: SPXW, SPY, QQQ, VIX.
+   * Each panel has a ticker header with price info.
    */
   function findPanels() {
     const panels = [];
@@ -211,10 +219,14 @@
     const text = row.textContent.trim();
     const strikeIndex = row.getAttribute('data-strike-index');
 
-    // Extract strike price — typically a 3-5 digit number
-    const strikeMatch = text.match(/\b(\d{3,5})\b/);
+    // Extract strike price from the left-side label cell
+    // SPXW: 3-5 digits (e.g. 6935), SPY/QQQ: 3 digits (e.g. 690, 687)
+    // VIX: 1-3 digits, possibly decimal (e.g. 20, 19.5, 150)
+    const leftCell = row.querySelector('.flex-shrink-0');
+    const strikeText = leftCell ? leftCell.textContent.trim() : text;
+    const strikeMatch = strikeText.match(/\b(\d{1,5}(?:\.\d+)?)\b/);
     if (!strikeMatch) return null;
-    const strike = parseInt(strikeMatch[1]);
+    const strike = parseFloat(strikeMatch[1]);
 
     // Extract dollar value from tabular-nums spans or any span with $ values
     let value = null;
