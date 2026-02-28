@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Heatseeker Capture</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>🔥 Heatseeker Capture</h1>
+    
+    <div class="status-bar" id="statusBar">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Idle</span>
+    </div>
+
+    <div class="section">
+      <label for="savePath">Save Folder</label>
+      <div class="input-row">
+        <input type="text" id="savePath" placeholder="C:\heatseeker\captures" />
+      </div>
+      <p class="hint">Base folder — date subfolders created automatically</p>
+    </div>
+
+    <div class="section">
+      <label for="backendUrl">Backend URL</label>
+      <input type="text" id="backendUrl" placeholder="http://localhost:5555" />
+      <p class="hint">Where captures are sent for processing</p>
+    </div>
+
+    <div class="section">
+      <label for="interval">Capture Interval</label>
+      <div class="interval-control">
+        <button class="interval-btn" data-delta="-1">−</button>
+        <span id="intervalDisplay">5</span>
+        <span>min</span>
+        <button class="interval-btn" data-delta="1">+</button>
+      </div>
+      <input type="range" id="intervalSlider" min="1" max="30" value="5" />
+      <p class="hint">1-30 minutes between captures</p>
+    </div>
+
+    <div class="section">
+      <div class="toggle-row">
+        <label for="notificationsToggle">Desktop Notifications</label>
+        <input type="checkbox" id="notificationsToggle" checked />
+      </div>
+      <div class="toggle-row">
+        <label for="discordToggle">Discord Alerts</label>
+        <input type="checkbox" id="discordToggle" checked />
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="captureNow" class="btn btn-secondary">📸 Capture Now</button>
+      <button id="toggleCapture" class="btn btn-primary">▶ Start Auto-Capture</button>
+    </div>
+
+    <div class="stats" id="statsSection">
+      <div class="stat">
+        <span class="stat-label">Today's captures</span>
+        <span class="stat-value" id="captureCount">0</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Last capture</span>
+        <span class="stat-value" id="lastCapture">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Next capture</span>
+        <span class="stat-value" id="nextCapture">—</span>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>v0.1.0</span>
+      <a href="#" id="openSettings">Settings</a>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

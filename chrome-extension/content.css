@@ -1,0 +1,33 @@
+/* Heatseeker Capture — Content Styles */
+/* Minimal — avoid interfering with Skylit's UI */
+
+/* Visual indicator when capture is active (small dot in corner) */
+.heatseeker-capture-indicator {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #00e676;
+  box-shadow: 0 0 6px rgba(0, 230, 118, 0.5);
+  z-index: 99999;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.heatseeker-capture-indicator.active {
+  opacity: 1;
+}
+
+.heatseeker-capture-indicator.capturing {
+  background: #ffab00;
+  animation: heatseeker-pulse 0.5s ease-in-out;
+}
+
+@keyframes heatseeker-pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.5); }
+  100% { transform: scale(1); }
+}

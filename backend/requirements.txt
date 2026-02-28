@@ -1,0 +1,20 @@
+# Heatseeker Trading System — Backend Dependencies
+
+# Web server for receiving captures from Chrome extension
+flask>=3.0
+flask-cors>=4.0
+
+# Moomoo OpenD Python SDK
+moomoo-api>=7.0
+
+# VIX / SPX index data (OpenD doesn't support US indices)
+yfinance>=0.2
+
+# Claude API for heatmap analysis
+anthropic>=0.40
+
+# Utilities
+python-dotenv>=1.0
+Pillow>=10.0
+requests>=2.31
+schedule>=1.2
