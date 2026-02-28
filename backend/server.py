@@ -145,8 +145,110 @@ def receive_capture():
             print(f'[Grader] Auto-grade failed: {e}')
             import traceback
             traceback.print_exc()
+
+        # ── Auto-Analyze via Claude ────────────────────────────
+        # Only triggers if best panel grades B+ or higher (50%+ intraday)
+        # Threshold: B+ = 50% of max intraday score
+        ANALYSIS_MIN_GRADE_PCT = 50.0  # B+ threshold
+
+        best_ticker = grade_results.get("best") if grade_results else None
+        best_grade = grade_results.get(best_ticker) if best_ticker and grade_results else None
+        best_pct = best_grade.get("intraday", {}).get("pct", 0) if best_grade else 0
+
+        if best_grade and best_pct >= ANALYSIS_MIN_GRADE_PCT:
+            try:
+                from analyzer import analyzer
+                from grader import format_grade_report
+
+                print(f'[Analyzer] Best panel {best_ticker} scored {best_pct:.1f}% '
+                      f'(>= {ANALYSIS_MIN_GRADE_PCT}%) — sending to Claude...')
+
+                analysis = analyzer.analyze(
+                    image_path=str(file_path),
+                    scraped_data=scraped_data,
+                    grade_result=best_grade,
+                    direction=best_grade.get("direction", "LONG"),
+                    skip_if_low_grade=False,  # We already filtered by grade
+                    min_grade_pct=0,
+                )
+
+                if analysis:
+                    # Save analysis alongside capture
+                    analysis_path = date_folder / f'{Path(filename).stem}_analysis.json'
+                    with open(str(analysis_path), 'w') as f:
+                        # Don't save base64 image data
+                        save_analysis = {k: v for k, v in analysis.items() if k != '_image_b64'}
+                        json.dump(save_analysis, f, indent=2)
+
+                    if analysis.get('skipped_claude'):
+                        print(f'[Analyzer] Claude skipped: {analysis.get("reason", "?")}')
+                        print(f'[Analyzer] Grade-only report:')
+                        if 'grade_report' in analysis:
+                            for line in analysis['grade_report'].split('\n'):
+                                print(f'[Analyzer]   {line}')
+                    else:
+                        model = analysis.get('_model', '?')
+                        in_tok = analysis.get('_input_tokens', 0)
+                        out_tok = analysis.get('_output_tokens', 0)
+                        print(f'[Analyzer] ✅ Claude {model} analysis complete '
+                              f'({in_tok} in / {out_tok} out tokens)')
+
+                        # Print key parts of the analysis
+                        if analysis.get('raw_analysis'):
+                            # Truncate long raw analysis for console
+                            raw = analysis['raw_analysis']
+                            preview = raw[:500] + '...' if len(raw) > 500 else raw
+                            print(f'[Analyzer] {"="*50}')
+                            for line in preview.split('\n'):
+                                print(f'[Analyzer]   {line}')
+                            print(f'[Analyzer] {"="*50}')
+                        elif analysis.get('parse_error'):
+                            print(f'[Analyzer] (raw text, JSON parse failed)')
+                        else:
+                            # Structured JSON response — print key fields
+                            print(f'[Analyzer] {"="*50}')
+                            for key in ['thesis', 'recommendation', 'confidence',
+                                        'trade_thesis', 'overall_bias', 'stand_aside']:
+                                if key in analysis:
+                                    val = analysis[key]
+                                    if isinstance(val, dict):
+                                        print(f'[Analyzer]   {key}:')
+                                        for k, v in val.items():
+                                            print(f'[Analyzer]     {k}: {v}')
+                                    else:
+                                        print(f'[Analyzer]   {key}: {val}')
+                            print(f'[Analyzer] {"="*50}')
+
+                    print(f'[Analyzer] Saved: {analysis_path}')
+
+                    # Attach to response
+                    response_data_analysis = {
+                        'model': analysis.get('_model'),
+                        'skipped': analysis.get('skipped_claude', False),
+                        'tokens_in': analysis.get('_input_tokens', 0),
+                        'tokens_out': analysis.get('_output_tokens', 0),
+                    }
+                    # Will be added to response_data below
+
+                else:
+                    print(f'[Analyzer] No API key or analysis returned None')
+                    response_data_analysis = None
+
+            except Exception as e:
+                print(f'[Analyzer] Auto-analyze failed: {e}')
+                import traceback
+                traceback.print_exc()
+                response_data_analysis = None
+        elif best_grade:
+            print(f'[Analyzer] Best panel {best_ticker} scored {best_pct:.1f}% '
+                  f'(< {ANALYSIS_MIN_GRADE_PCT}%) — skipping Claude to save tokens')
+            response_data_analysis = None
+        else:
+            response_data_analysis = None
+
     else:
         print(f'[Capture] Saved: {file_path} ({meta["file_size"]} bytes) [screenshot only, no DOM data]')
+        response_data_analysis = None
 
     response_data = {
         'status': 'ok',
@@ -170,6 +272,9 @@ def receive_capture():
                 'pattern': grade_results[best].get('pattern', ''),
                 'pinned': grade_results[best].get('pinned', {}).get('pinned', False),
             }
+
+    if response_data_analysis:
+        response_data['analysis'] = response_data_analysis
 
     return jsonify(response_data)
 
