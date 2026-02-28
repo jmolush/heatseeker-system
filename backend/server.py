@@ -46,7 +46,9 @@ def receive_capture():
         return jsonify({'error': 'No image provided'}), 400
 
     image_file = request.files['image']
-    filename = request.form.get('filename', f'capture_{datetime.utcnow().isoformat()}.png')
+    # Default filename uses dashes instead of colons (Windows-safe)
+    default_name = f'capture_{datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")}.png'
+    filename = request.form.get('filename', default_name)
     date_str = request.form.get('date', datetime.utcnow().strftime('%Y-%m-%d'))
     timestamp = request.form.get('timestamp', datetime.utcnow().isoformat())
     save_path_override = request.form.get('savePath', '')
