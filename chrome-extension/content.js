@@ -212,21 +212,38 @@
 
   /**
    * Find the single panel in individual ticker mode.
-   * Uses the detected ticker from the info button, then finds the heatmap container.
+   * Uses the detected ticker from the info button, then finds the heatmap table.
+   *
+   * Individual ticker pages use a TABLE layout (not data-strike-index divs):
+   *   <table> → <thead> (expiry date headers) → <tbody> → <tr id="strike-row-XX">
+   *   First <td> = strike price, subsequent <td>s = expiry column values
+   *   Values in <div data-velocity-key="STRIKE_DATE">$XXK</div>
    */
   function findIndividualPanel() {
     const tickerInfo = detectIndividualTicker();
     if (!tickerInfo) return [];
 
-    // The heatmap data lives in the main content area (id="main-content" or similar).
-    // Look for the scrollable container with data-strike-index rows.
+    // Strategy 1: Find the heatmap table by looking for tr[id^="strike-row-"]
+    const strikeRows = document.querySelectorAll('tr[id^="strike-row-"]');
+    if (strikeRows.length > 0) {
+      // Walk up to the <table> or <tbody>
+      let container = strikeRows[0].closest('table') || strikeRows[0].closest('tbody');
+      if (!container) container = strikeRows[0].parentElement;
+
+      return [{
+        ticker: tickerInfo.ticker,
+        headerElement: null,
+        container: container,
+        tickerInfo: tickerInfo,
+        isTableLayout: true,  // Signal that this is the table-based layout
+      }];
+    }
+
+    // Strategy 2: Fallback to data-strike-index (in case DOM changes back)
     const allRows = document.querySelectorAll('[data-strike-index]');
     if (allRows.length === 0) return [];
 
-    // Walk up from the first row to find the best container
     let container = findPanelContainer(allRows[0]);
-
-    // Fallback: if findPanelContainer fails, use the closest common ancestor
     if (!container) {
       container = allRows[0].parentElement;
       while (container && container.querySelectorAll('[data-strike-index]').length < allRows.length * 0.5) {
@@ -240,7 +257,8 @@
       ticker: tickerInfo.ticker,
       headerElement: null,
       container: container,
-      tickerInfo: tickerInfo,  // Pass along price/change data
+      tickerInfo: tickerInfo,
+      isTableLayout: false,
     }];
   }
 
@@ -357,13 +375,22 @@
     }
 
     // ─── Node Rows ───────────────────────────────────────
-    // Each row has data-strike-index attribute
-    const rows = container.querySelectorAll('[data-strike-index]');
-
-    for (const row of rows) {
-      const node = parseNodeRow(row);
-      if (node) {
-        panel.nodes.push(node);
+    // Individual ticker table layout: tr[id^="strike-row-"] with expiry columns
+    // Trinity Mode layout: divs with data-strike-index attribute
+    if (panelInfo.isTableLayout) {
+      // Table layout — individual ticker page
+      const tableData = parseTableLayout(container);
+      panel.nodes = tableData.nodes;
+      panel.expiry_dates = tableData.expiryDates;
+      panel.current_strike = tableData.currentStrike;
+    } else {
+      // Original data-strike-index layout (Trinity Mode)
+      const rows = container.querySelectorAll('[data-strike-index]');
+      for (const row of rows) {
+        const node = parseNodeRow(row);
+        if (node) {
+          panel.nodes.push(node);
+        }
       }
     }
 
@@ -395,7 +422,169 @@
   }
 
   /**
-   * Parse a single node row element into structured data.
+   * Parse the table-based heatmap layout used on individual ticker pages.
+   *
+   * DOM structure:
+   *   <table>
+   *     <thead>
+   *       <tr>
+   *         <th>Strike</th>
+   *         <th>2026-03-06</th>  ← expiry dates
+   *         <th>2026-03-13</th>
+   *         ...
+   *       </tr>
+   *     </thead>
+   *     <tbody>
+   *       <tr id="strike-row-91">
+   *         <td style="...font-weight: 500..."><span>80.0</span></td>  ← strike price
+   *         <td style="background-color: rgb(49,100,140)">
+   *           <div data-velocity-key="80_2026-03-06">$2.4K</div>
+   *         </td>
+   *         ...
+   *       </tr>
+   *     </tbody>
+   *   </table>
+   *
+   * Current price row: <td> with font-weight: 700 and white background
+   * King node cell: has box-shadow inset and lucide-star SVG, font-weight: 700
+   *
+   * Returns { nodes: [...], expiryDates: [...], currentStrike: number|null }
+   */
+  function parseTableLayout(container) {
+    const result = {
+      nodes: [],
+      expiryDates: [],
+      currentStrike: null,
+    };
+
+    // Extract expiry dates from <thead>
+    const table = container.tagName === 'TABLE' ? container : container.querySelector('table');
+    if (!table) {
+      // Fallback: container might be the tbody itself
+      const headerRow = container.closest('table')?.querySelector('thead tr');
+      if (headerRow) {
+        const ths = headerRow.querySelectorAll('th');
+        ths.forEach((th, i) => {
+          if (i > 0) { // Skip "Strike" header
+            result.expiryDates.push(th.textContent.trim());
+          }
+        });
+      }
+    } else {
+      const headerRow = table.querySelector('thead tr');
+      if (headerRow) {
+        const ths = headerRow.querySelectorAll('th');
+        ths.forEach((th, i) => {
+          if (i > 0) result.expiryDates.push(th.textContent.trim());
+        });
+      }
+    }
+
+    // Parse each strike row
+    const rows = (table || container).querySelectorAll('tr[id^="strike-row-"]');
+
+    for (const row of rows) {
+      const tds = row.querySelectorAll('td');
+      if (tds.length < 2) continue;
+
+      // First TD = strike price
+      const strikeTd = tds[0];
+      const strikeSpan = strikeTd.querySelector('span');
+      const strikeText = strikeSpan ? strikeSpan.textContent.trim() : strikeTd.textContent.trim();
+      const strike = parseFloat(strikeText);
+      if (isNaN(strike)) continue;
+
+      // Detect if this is the current price row (white bg, bold font)
+      const strikeTdStyle = strikeTd.getAttribute('style') || '';
+      if (strikeTdStyle.includes('font-weight: 700') && strikeTdStyle.includes('rgb(255, 255, 255)')) {
+        result.currentStrike = strike;
+      }
+
+      // Parse each expiry column (td index 1+)
+      const expiryValues = [];
+      let rowKingCell = null;
+
+      for (let i = 1; i < tds.length; i++) {
+        const td = tds[i];
+        const velocityDiv = td.querySelector('[data-velocity-key]');
+        const cellText = velocityDiv ? velocityDiv.textContent.trim() : td.textContent.trim();
+
+        // Parse dollar value
+        const value = parseDollarValue(cellText);
+
+        // Background color from the TD
+        const bgColor = td.style.backgroundColor || null;
+        const gammaType = classifyGamma(bgColor);
+
+        // King marker: star SVG inside the cell
+        const hasStar = td.querySelector('[class*="lucide-star"], .lucide-star') !== null;
+        // Also check for bold font-weight on the cell (king cells have font-weight: 700)
+        const tdStyle = td.getAttribute('style') || '';
+        const isBold = tdStyle.includes('font-weight: 700');
+        const isKing = hasStar;
+
+        // Extract expiry date from velocity key (e.g., "80_2026-03-06" → "2026-03-06")
+        let expiryDate = result.expiryDates[i - 1] || null;
+        if (!expiryDate && velocityDiv) {
+          const vKey = velocityDiv.getAttribute('data-velocity-key') || '';
+          const dateMatch = vKey.match(/\d{4}-\d{2}-\d{2}/);
+          if (dateMatch) expiryDate = dateMatch[0];
+        }
+
+        expiryValues.push({
+          expiry_date: expiryDate,
+          value: value,
+          value_display: cellText,
+          gamma_type: gammaType,
+          bg_color_rgb: bgColor,
+          is_king: isKing,
+        });
+
+        if (isKing) rowKingCell = expiryValues[expiryValues.length - 1];
+      }
+
+      // Build the node object — includes all expiry columns
+      const node = {
+        strike: strike,
+        strike_index: parseInt(row.id.replace('strike-row-', '')) || null,
+        expiry_values: expiryValues,
+        // For backward compatibility, also set aggregate values:
+        // Use the nearest-dated expiry with the largest absolute value as the "main" value
+        value: null,
+        value_display: '',
+        gamma_type: 'unknown',
+        is_king: false,
+        bg_color_rgb: null,
+      };
+
+      // Find the most significant cell (largest absolute value) for the aggregate fields
+      let maxAbsValue = 0;
+      for (const ev of expiryValues) {
+        if (ev.value !== null && Math.abs(ev.value) > maxAbsValue) {
+          maxAbsValue = Math.abs(ev.value);
+          node.value = ev.value;
+          node.value_display = ev.value_display;
+          node.gamma_type = ev.gamma_type;
+          node.bg_color_rgb = ev.bg_color_rgb;
+        }
+        if (ev.is_king) {
+          node.is_king = true;
+          // King overrides aggregate value
+          node.value = ev.value;
+          node.value_display = ev.value_display;
+          node.gamma_type = ev.gamma_type;
+          node.bg_color_rgb = ev.bg_color_rgb;
+        }
+      }
+
+      result.nodes.push(node);
+    }
+
+    return result;
+  }
+
+  /**
+   * Parse a single node row element into structured data (Trinity Mode / data-strike-index layout).
    * 
    * Row structure:
    * - data-strike-index="XX" attribute
