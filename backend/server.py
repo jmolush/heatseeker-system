@@ -83,7 +83,14 @@ def receive_capture():
         'file_size': os.path.getsize(str(file_path)),
         'save_path': str(file_path),
         'has_scraped_data': scraped_data is not None,
+        'mode': scraped_data.get('mode', 'unknown') if scraped_data else 'screenshot_only',
     }
+    
+    # Include individual ticker info in metadata
+    if scraped_data and scraped_data.get('individual_ticker'):
+        meta['individual_ticker'] = scraped_data['individual_ticker']
+        meta['individual_price'] = scraped_data.get('individual_price')
+        meta['individual_change_pct'] = scraped_data.get('individual_change_pct')
 
     meta_path = date_folder / f'{Path(filename).stem}.json'
     with open(str(meta_path), 'w') as f:
@@ -108,16 +115,19 @@ def receive_capture():
 
             # Print summary to console
             print(f'[Grader] {"="*50}')
-            for ticker in ["SPXW", "SPY", "QQQ"]:
-                if ticker in grade_results:
-                    g = grade_results[ticker]
-                    i = g["intraday"]
-                    esc = "✅ ESCALATE" if g.get("escalate_to_claude") else "⏭️ skip"
-                    pat = g.get("pattern", "")
-                    pat_str = f" | {pat.upper()}" if pat not in ("mixed", "unknown") else ""
-                    pin_str = " | 📌PINNED" if g.get("pinned", {}).get("pinned") else ""
-                    print(f'[Grader] {ticker}: {i["score"]}/{i["max"]} '
-                          f'({i["pct"]}%) {i["grade"]} | {esc}{pat_str}{pin_str}')
+            # Print all graded tickers (works for both Trinity and individual mode)
+            for ticker, g in grade_results.items():
+                if ticker in ("best", "summary"):
+                    continue
+                if not isinstance(g, dict) or "intraday" not in g:
+                    continue
+                i = g["intraday"]
+                esc = "✅ ESCALATE" if g.get("escalate_to_claude") else "⏭️ skip"
+                pat = g.get("pattern", "")
+                pat_str = f" | {pat.upper()}" if pat not in ("mixed", "unknown") else ""
+                pin_str = " | 📌PINNED" if g.get("pinned", {}).get("pinned") else ""
+                print(f'[Grader] {ticker}: {i["score"]}/{i["max"]} '
+                      f'({i["pct"]}%) {i["grade"]} | {esc}{pat_str}{pin_str}')
 
             # Print best panel detail
             best = grade_results.get("best")
@@ -256,7 +266,14 @@ def receive_capture():
         'path': str(file_path),
         'size': meta['file_size'],
         'timestamp': timestamp,
+        'mode': scraped_data.get('mode', 'unknown') if scraped_data else 'screenshot_only',
     }
+
+    # Include individual ticker info if present
+    if scraped_data and scraped_data.get('individual_ticker'):
+        response_data['individual_ticker'] = scraped_data['individual_ticker']
+        response_data['individual_price'] = scraped_data.get('individual_price')
+        response_data['individual_change_pct'] = scraped_data.get('individual_change_pct')
     if grade_results:
         # Include grade summary in response so extension could display it
         best = grade_results.get("best")

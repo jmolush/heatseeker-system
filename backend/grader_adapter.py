@@ -69,12 +69,24 @@ def scraper_to_grader_king(panel: Dict) -> Optional[Dict]:
 
 
 def scraper_to_trinity_data(scraped_data: Dict) -> Dict:
-    """Convert full scraper output to trinity_data for cross-index grading."""
+    """
+    Convert full scraper output to trinity_data for cross-index grading.
+    
+    For Trinity Mode: includes SPXW, SPY, QQQ, VIX panels.
+    For Individual Mode: includes whichever single ticker is present.
+    """
     trinity = {}
+    mode = scraped_data.get("mode", "single")
+    
     for panel in scraped_data.get("panels", []):
         ticker = panel.get("ticker", "")
-        if ticker not in ("SPXW", "SPY", "QQQ", "VIX"):
-            continue
+        
+        # In trinity mode, only include known index tickers
+        # In individual mode, include whatever ticker we have
+        if mode in ("trinity", "trinity_plus", "dual"):
+            if ticker not in ("SPXW", "SPY", "QQQ", "VIX"):
+                continue
+        
         trinity[ticker] = {
             "price": panel.get("price", 0),
             "change_pct": panel.get("change_pct", 0),
@@ -270,9 +282,12 @@ def grade_context_for_claude(grade_result: Dict) -> Optional[str]:
 def grade_all_panels(scraped_data: Dict, direction: str = "LONG",
                      prev_captures: Dict = None) -> Dict:
     """
-    Grade ALL tradeable panels (SPXW, SPY, QQQ) from a single capture.
-    Returns dict keyed by ticker.
+    Grade ALL tradeable panels from a single capture.
     
+    For Trinity Mode: grades SPXW, SPY, QQQ.
+    For Individual Mode: grades whatever single ticker is present.
+    
+    Returns dict keyed by ticker.
     This is the recommended call — grade everything at once, compare.
     """
     from grader import should_escalate_to_claude
@@ -281,7 +296,26 @@ def grade_all_panels(scraped_data: Dict, direction: str = "LONG",
     best_ticker = None
     best_score = -1
 
-    for ticker in ["SPXW", "SPY", "QQQ"]:
+    mode = scraped_data.get("mode", "single")
+    
+    # Determine which tickers to grade
+    if mode == "individual":
+        # Individual mode: grade the single ticker present
+        tickers_to_grade = []
+        individual_ticker = scraped_data.get("individual_ticker")
+        if individual_ticker:
+            tickers_to_grade = [individual_ticker]
+        else:
+            # Fallback: extract from panels
+            for panel in scraped_data.get("panels", []):
+                t = panel.get("ticker")
+                if t:
+                    tickers_to_grade.append(t)
+    else:
+        # Trinity mode: grade the standard index panels
+        tickers_to_grade = ["SPXW", "SPY", "QQQ"]
+
+    for ticker in tickers_to_grade:
         grade = grade_capture(scraped_data, ticker, direction, prev_captures=prev_captures)
         if grade:
             escalate, reason = should_escalate_to_claude(grade)
@@ -300,6 +334,7 @@ def grade_all_panels(scraped_data: Dict, direction: str = "LONG",
             "best_ticker": best_ticker,
             "best_score": best_score,
             "panel_count": len([k for k in results if k not in ("best", "summary")]),
+            "mode": mode,
             "escalate_any": any(
                 v.get("escalate_to_claude") for k, v in results.items()
                 if k not in ("best", "summary")

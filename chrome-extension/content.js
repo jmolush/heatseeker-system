@@ -19,14 +19,25 @@
    * - Standard layout: 4 panels — SPXW, SPY, QQQ, VIX (Trinity + VIX gamma)
    */
   function scrapeHeatmapData() {
+    const mode = detectMode();
     const result = {
       timestamp: new Date().toISOString(),
       url: window.location.href,
-      mode: detectMode(),
+      mode: mode,
       panels: [],
       panel_count: 0,
       total_nodes: 0,
     };
+
+    // For individual ticker mode, include the detected ticker info at top level
+    if (mode === 'individual') {
+      const tickerInfo = detectIndividualTicker();
+      if (tickerInfo) {
+        result.individual_ticker = tickerInfo.ticker;
+        result.individual_price = tickerInfo.price;
+        result.individual_change_pct = tickerInfo.changePct;
+      }
+    }
 
     // Find all ticker panels by looking for ticker header elements
     const panels = findPanels();
@@ -47,27 +58,197 @@
 
   /**
    * Detect what mode Skylit is in.
+   * 
+   * Three modes:
+   * - trinity_plus / trinity / dual: Multi-column overlay (div.fixed.inset-0.z-40)
+   * - individual: Single ticker heatmap page (ticker info button with z-index: 15)
+   * - single: Fallback
    */
   function detectMode() {
-    const text = document.body.innerText;
-    // Skylit header shows "TRINITY X panels" — extract count
-    const panelMatch = text.match(/(\d+)\s*panels?/i);
-    if (panelMatch) {
-      const count = parseInt(panelMatch[1]);
-      if (count >= 4) return 'trinity_plus';  // Trinity + VIX
-      if (count === 3) return 'trinity';
-      if (count === 2) return 'dual';
+    // Check for Trinity Mode overlay first
+    const trinityOverlay = document.querySelector('div.fixed.inset-0.z-40');
+    if (trinityOverlay) {
+      const text = trinityOverlay.textContent || '';
+      const panelMatch = text.match(/(\d+)\s*panels?/i);
+      if (panelMatch) {
+        const count = parseInt(panelMatch[1]);
+        if (count >= 4) return 'trinity_plus';
+        if (count === 3) return 'trinity';
+        if (count === 2) return 'dual';
+      }
+      return 'trinity';
     }
-    if (text.includes('TRINITY')) return 'trinity';
+
+    // Check for individual ticker page — the ticker info button
+    // It's inside a div with z-index: 15 and contains ticker symbol + price
+    const tickerInfo = detectIndividualTicker();
+    if (tickerInfo) return 'individual';
+
+    // Fallback: check body text for TRINITY keyword
+    const bodyText = document.body.innerText;
+    if (bodyText.includes('TRINITY')) return 'trinity';
+
     return 'single';
   }
 
   /**
-   * Find panel containers. In Trinity Mode there are 3-4 side-by-side panels.
-   * Standard: SPXW, SPY, QQQ. With VIX gamma: SPXW, SPY, QQQ, VIX.
-   * Each panel has a ticker header with price info.
+   * Detect the active ticker on individual ticker pages.
+   * 
+   * DOM structure (as of March 2026):
+   * The ticker info button lives inside a div with style "z-index: 15".
+   * Inside the button:
+   *   <span style="font-weight: 600; font-family: 'Roboto Mono'...">AMD</span>
+   *   <span style="background-color: rgb(34, 197, 94)">  (green dot)
+   *   <span class="hidden sm:inline">$</span>
+   *   <span class="hidden md:inline">199.36</span>
+   *   <span class="hidden lg:inline">-3.30</span>   (change, red/green bg)
+   *   <span class="hidden lg:inline">(-1.62%)</span>
+   *
+   * Returns: { ticker, price, change, changePct } or null
+   */
+  function detectIndividualTicker() {
+    // Strategy 1: Find the ticker info button via z-index: 15 container
+    const allDivs = document.querySelectorAll('div[style*="z-index"]');
+    for (const div of allDivs) {
+      if (!div.style.zIndex || parseInt(div.style.zIndex) !== 15) continue;
+
+      const button = div.querySelector('button');
+      if (!button) continue;
+
+      const spans = button.querySelectorAll('span');
+      if (spans.length < 2) continue;
+
+      // First span should be the ticker symbol (short, all-caps, monospace font)
+      const firstSpan = spans[0];
+      const tickerText = firstSpan.textContent.trim();
+      const style = firstSpan.getAttribute('style') || '';
+
+      // Validate: ticker is 1-5 uppercase letters, monospace font, font-weight 600+
+      if (!/^[A-Z]{1,5}$/.test(tickerText)) continue;
+      if (!style.includes('Roboto Mono') && !style.includes('monospace')) continue;
+
+      const result = { ticker: tickerText, price: null, change: null, changePct: null };
+
+      // Extract price and change from subsequent spans
+      for (const span of spans) {
+        const text = span.textContent.trim();
+
+        // Price: digits with optional comma and decimal (e.g., "199.36" or "5,678.88")
+        if (!result.price && /^[\d,]+\.\d{2}$/.test(text)) {
+          result.price = parseFloat(text.replace(/,/g, ''));
+        }
+
+        // Change amount: signed number (e.g., "-3.30" or "+2.50")
+        if (!result.change && /^[+-]?\d+\.\d+$/.test(text) && result.price && parseFloat(text) !== result.price) {
+          result.change = parseFloat(text);
+        }
+
+        // Change percentage: parenthesized or with % (e.g., "(-1.62%)" or "-1.62%")
+        const pctMatch = text.match(/\(?([-+]?\d+\.\d+)%\)?/);
+        if (!result.changePct && pctMatch) {
+          result.changePct = parseFloat(pctMatch[1]);
+        }
+      }
+
+      return result;
+    }
+
+    // Strategy 2: Fallback — look for any button with Roboto Mono ticker + green dot pattern
+    const buttons = document.querySelectorAll('button');
+    for (const button of buttons) {
+      const spans = button.querySelectorAll('span');
+      if (spans.length < 3) continue;
+
+      const firstSpan = spans[0];
+      const tickerText = firstSpan.textContent.trim();
+      const style = firstSpan.getAttribute('style') || '';
+
+      if (!/^[A-Z]{1,5}$/.test(tickerText)) continue;
+      if (!style.includes('font-weight') || !style.includes('monospace') && !style.includes('Roboto Mono')) continue;
+
+      // Check for green dot (second span with small width/height and green bg)
+      const secondSpan = spans[1];
+      const secondStyle = secondSpan.getAttribute('style') || '';
+      if (!secondStyle.includes('border-radius: 50%') && !secondStyle.includes('border-radius:50%')) continue;
+
+      const result = { ticker: tickerText, price: null, change: null, changePct: null };
+
+      for (const span of spans) {
+        const text = span.textContent.trim();
+        if (!result.price && /^[\d,]+\.\d{2}$/.test(text)) {
+          result.price = parseFloat(text.replace(/,/g, ''));
+        }
+        const pctMatch = text.match(/\(?([-+]?\d+\.\d+)%\)?/);
+        if (!result.changePct && pctMatch) {
+          result.changePct = parseFloat(pctMatch[1]);
+        }
+      }
+
+      return result;
+    }
+
+    return null;
+  }
+
+  /**
+   * Find panel containers.
+   * 
+   * In Trinity Mode: 3-4 side-by-side panels (SPXW, SPY, QQQ, VIX).
+   * In Individual Mode: Single panel for whatever ticker is active.
+   * 
+   * Returns array of { ticker, headerElement, container } objects.
    */
   function findPanels() {
+    const mode = detectMode();
+
+    // ── Individual Ticker Mode ─────────────────────────────
+    if (mode === 'individual') {
+      return findIndividualPanel();
+    }
+
+    // ── Trinity / Multi-Column Mode ────────────────────────
+    return findTrinityPanels();
+  }
+
+  /**
+   * Find the single panel in individual ticker mode.
+   * Uses the detected ticker from the info button, then finds the heatmap container.
+   */
+  function findIndividualPanel() {
+    const tickerInfo = detectIndividualTicker();
+    if (!tickerInfo) return [];
+
+    // The heatmap data lives in the main content area (id="main-content" or similar).
+    // Look for the scrollable container with data-strike-index rows.
+    const allRows = document.querySelectorAll('[data-strike-index]');
+    if (allRows.length === 0) return [];
+
+    // Walk up from the first row to find the best container
+    let container = findPanelContainer(allRows[0]);
+
+    // Fallback: if findPanelContainer fails, use the closest common ancestor
+    if (!container) {
+      container = allRows[0].parentElement;
+      while (container && container.querySelectorAll('[data-strike-index]').length < allRows.length * 0.5) {
+        container = container.parentElement;
+      }
+    }
+
+    if (!container) return [];
+
+    return [{
+      ticker: tickerInfo.ticker,
+      headerElement: null,
+      container: container,
+      tickerInfo: tickerInfo,  // Pass along price/change data
+    }];
+  }
+
+  /**
+   * Find panels in Trinity / multi-column mode.
+   * Searches for known index tickers in panel headers.
+   */
+  function findTrinityPanels() {
     const panels = [];
     const tickers = ['SPXW', 'SPY', 'QQQ', 'IWM', 'VIX', 'NDX', 'RUT'];
 
@@ -132,39 +313,47 @@
     };
 
     // ─── Header Info ─────────────────────────────────────
-    // Look in the area around the ticker label for price and change%
-    let headerArea = headerElement;
-    for (let i = 0; i < 5; i++) {
-      headerArea = headerArea.parentElement;
-      if (!headerArea) break;
-      const text = headerArea.textContent;
-      
-      // Look for price pattern: $X,XXX.XX or XXXX.XX
-      if (!panel.price) {
-        const priceMatch = text.match(/\$?([\d,]+\.\d{2})\b/);
-        if (priceMatch) {
-          panel.price = parseFloat(priceMatch[1].replace(/,/g, ''));
-        }
-      }
+    // In individual mode, tickerInfo already has price/change from the info button
+    if (panelInfo.tickerInfo) {
+      panel.price = panelInfo.tickerInfo.price;
+      panel.change_pct = panelInfo.tickerInfo.changePct;
+    }
 
-      // Change percentage
-      if (!panel.change_pct) {
-        const changeMatch = text.match(/([-+]?\d+\.\d+)%/);
-        if (changeMatch) {
-          panel.change_pct = parseFloat(changeMatch[1]);
+    // For Trinity mode (or as fallback), extract from the header area
+    if (headerElement) {
+      let headerArea = headerElement;
+      for (let i = 0; i < 5; i++) {
+        headerArea = headerArea.parentElement;
+        if (!headerArea) break;
+        const text = headerArea.textContent;
+        
+        // Look for price pattern: $X,XXX.XX or XXXX.XX
+        if (!panel.price) {
+          const priceMatch = text.match(/\$?([\d,]+\.\d{2})\b/);
+          if (priceMatch) {
+            panel.price = parseFloat(priceMatch[1].replace(/,/g, ''));
+          }
         }
-      }
 
-      // King percentage (shown as "King X.X% ↑/↓")
-      if (!panel.king_pct) {
-        const kingMatch = text.match(/King\s+([\d.]+)%?\s*([↑↓]?)/i);
-        if (kingMatch) {
-          panel.king_pct = kingMatch[1] + '%' + (kingMatch[2] || '');
+        // Change percentage
+        if (!panel.change_pct) {
+          const changeMatch = text.match(/([-+]?\d+\.\d+)%/);
+          if (changeMatch) {
+            panel.change_pct = parseFloat(changeMatch[1]);
+          }
         }
-      }
 
-      // Don't go beyond the panel container
-      if (headerArea === container) break;
+        // King percentage (shown as "King X.X% ↑/↓")
+        if (!panel.king_pct) {
+          const kingMatch = text.match(/King\s+([\d.]+)%?\s*([↑↓]?)/i);
+          if (kingMatch) {
+            panel.king_pct = kingMatch[1] + '%' + (kingMatch[2] || '');
+          }
+        }
+
+        // Don't go beyond the panel container
+        if (headerArea === container) break;
+      }
     }
 
     // ─── Node Rows ───────────────────────────────────────
