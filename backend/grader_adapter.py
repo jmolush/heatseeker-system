@@ -137,7 +137,7 @@ def prepare_grader_input(scraped_data: Dict, ticker: str = "SPY",
     if not target_panel:
         return None
 
-    price = target_panel.get("price", 0)
+    price = target_panel.get("price") or scraped_data.get("individual_price") or 0
     gex_nodes = scraper_to_grader_nodes(target_panel)
     king_node = scraper_to_grader_king(target_panel)
     trinity_data = scraper_to_trinity_data(scraped_data)

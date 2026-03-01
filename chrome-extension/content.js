@@ -132,18 +132,20 @@
       // Extract price and change from subsequent spans
       for (const span of spans) {
         const text = span.textContent.trim();
+        // Strip leading $ for price matching
+        const textNoDollar = text.replace(/^\$/, '');
 
-        // Price: digits with optional comma and decimal (e.g., "199.36" or "5,678.88")
-        if (!result.price && /^[\d,]+\.\d{2}$/.test(text)) {
-          result.price = parseFloat(text.replace(/,/g, ''));
+        // Price: digits with optional comma and decimal (e.g., "40.75" or "$5,678.88")
+        if (!result.price && /^[\d,]+\.\d{2}$/.test(textNoDollar)) {
+          result.price = parseFloat(textNoDollar.replace(/,/g, ''));
         }
 
         // Change amount: signed number (e.g., "-3.30" or "+2.50")
-        if (!result.change && /^[+-]?\d+\.\d+$/.test(text) && result.price && parseFloat(text) !== result.price) {
-          result.change = parseFloat(text);
+        if (!result.change && /^[+-]?\d+\.\d+$/.test(textNoDollar) && result.price && parseFloat(textNoDollar) !== result.price) {
+          result.change = parseFloat(textNoDollar);
         }
 
-        // Change percentage: parenthesized or with % (e.g., "(-1.62%)" or "-1.62%")
+        // Change percentage: parenthesized or with % (e.g., "(-7.46%)" or "-7.46%")
         const pctMatch = text.match(/\(?([-+]?\d+\.\d+)%\)?/);
         if (!result.changePct && pctMatch) {
           result.changePct = parseFloat(pctMatch[1]);
@@ -175,8 +177,9 @@
 
       for (const span of spans) {
         const text = span.textContent.trim();
-        if (!result.price && /^[\d,]+\.\d{2}$/.test(text)) {
-          result.price = parseFloat(text.replace(/,/g, ''));
+        const textNoDollar = text.replace(/^\$/, '');
+        if (!result.price && /^[\d,]+\.\d{2}$/.test(textNoDollar)) {
+          result.price = parseFloat(textNoDollar.replace(/,/g, ''));
         }
         const pctMatch = text.match(/\(?([-+]?\d+\.\d+)%\)?/);
         if (!result.changePct && pctMatch) {
