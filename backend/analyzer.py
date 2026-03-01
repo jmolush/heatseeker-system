@@ -9,13 +9,137 @@ Tiered approach:
 
 import base64
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
 import anthropic
 
 from config import Config
+
+
+# ─── Market Timestamp Helper ──────────────────────────────────────
+
+def get_market_timestamp() -> dict:
+    """
+    Compute the current ET time and classify the market session.
+    Returns a dict with 'time_et', 'session', and 'description' for injection
+    into the analysis prompt.
+    """
+    utc_now = datetime.now(timezone.utc)
+    # US Eastern = UTC-5 (EST) or UTC-4 (EDT)
+    # Simple DST approximation: EDT March second Sunday – November first Sunday
+    year = utc_now.year
+    # March: second Sunday
+    march1 = datetime(year, 3, 1, tzinfo=timezone.utc)
+    march_second_sunday = march1 + timedelta(days=(6 - march1.weekday()) % 7 + 7)
+    # November: first Sunday
+    nov1 = datetime(year, 11, 1, tzinfo=timezone.utc)
+    nov_first_sunday = nov1 + timedelta(days=(6 - nov1.weekday()) % 7)
+
+    if march_second_sunday.replace(hour=7) <= utc_now < nov_first_sunday.replace(hour=6):
+        et_offset = timedelta(hours=-4)  # EDT
+        tz_label = "EDT"
+    else:
+        et_offset = timedelta(hours=-5)  # EST
+        tz_label = "EST"
+
+    et_now = utc_now + et_offset
+    hour = et_now.hour
+    minute = et_now.minute
+    time_decimal = hour + minute / 60.0
+
+    # Classify session
+    weekday = et_now.weekday()  # 0=Mon, 6=Sun
+    if weekday >= 5:
+        session = "WEEKEND"
+        description = "Markets closed (weekend)"
+    elif time_decimal < 4.0:
+        session = "OVERNIGHT"
+        description = "Markets closed (overnight)"
+    elif time_decimal < 9.5:
+        session = "PRE_MARKET"
+        description = "Pre-market session — limited liquidity, no 0DTE recommendations"
+    elif time_decimal < 10.0:
+        session = "OPENING"
+        description = "Opening rotation (9:30-10:00 ET) — high volatility, wide spreads, let range establish"
+    elif time_decimal < 11.5:
+        session = "MORNING"
+        description = "Morning session (10:00-11:30 ET) — prime trading window, dealer flows active"
+    elif time_decimal < 14.0:
+        session = "MIDDAY"
+        description = "Midday session (11:30-14:00 ET) — lower volume, gamma pinning, mean-reversion"
+    elif time_decimal < 15.0:
+        session = "AFTERNOON"
+        description = "Afternoon session (14:00-15:00 ET) — volume increasing, charm acceleration for 0DTE"
+    elif time_decimal < 15.5:
+        session = "POWER_HOUR_EARLY"
+        description = "Early power hour (15:00-15:30 ET) — max charm/gamma effects, Robinhood forced flows"
+    elif time_decimal < 16.0:
+        session = "POWER_HOUR_LATE"
+        description = "Late power hour (15:30-16:00 ET) — extreme theta, only highest-conviction 0DTE"
+    elif time_decimal < 20.0:
+        session = "AFTER_HOURS"
+        description = "After-hours — no options trading"
+    else:
+        session = "OVERNIGHT"
+        description = "Markets closed (overnight)"
+
+    # Minutes remaining in regular session
+    if 9.5 <= time_decimal < 16.0 and weekday < 5:
+        minutes_to_close = int((16.0 - time_decimal) * 60)
+        close_note = f"{minutes_to_close} minutes to close"
+    else:
+        close_note = "Market closed"
+
+    return {
+        "time_et": et_now.strftime(f"%Y-%m-%d %H:%M {tz_label}"),
+        "time_utc": utc_now.strftime("%Y-%m-%d %H:%M UTC"),
+        "session": session,
+        "description": description,
+        "close_note": close_note,
+        "day_of_week": et_now.strftime("%A"),
+    }
+
+
+def format_market_timestamp() -> str:
+    """Format the market timestamp as a string block for prompt injection."""
+    ts = get_market_timestamp()
+    return (
+        f"**MARKET TIMESTAMP**: {ts['time_et']} ({ts['day_of_week']})\n"
+        f"**SESSION**: {ts['session']} — {ts['description']}\n"
+        f"**CLOSE**: {ts['close_note']}"
+    )
+
+
+# ─── System Prompt Loader ────────────────────────────────────────
+
+def load_trading_system_prompt() -> str:
+    """
+    Load the Opus trading analyst system prompt from the prompts directory.
+    Falls back to the legacy ANALYSIS_SYSTEM_PROMPT if file not found.
+    
+    File format:
+      # Title
+      > Description
+      ---
+      <actual prompt content — may itself contain --- as formatting>
+    
+    We split on the FIRST '---' only and return everything after it.
+    """
+    prompt_path = Path(__file__).parent.parent / "prompts" / "opus_trading_analyst.md"
+    if prompt_path.exists():
+        with open(prompt_path, "r") as f:
+            content = f.read()
+        # Split on the first --- delimiter only; everything after is the prompt
+        idx = content.find("\n---\n")
+        if idx != -1:
+            return content[idx + 5:].strip()  # skip past \n---\n
+        # No delimiter found — use entire content
+        return content.strip()
+    else:
+        print(f"[Analyzer] Warning: {prompt_path} not found, using legacy prompt")
+        return LEGACY_ANALYSIS_SYSTEM_PROMPT
 
 
 # ─── System Prompts ───────────────────────────────────────────────
@@ -39,7 +163,7 @@ Respond in JSON format:
 Be conservative — only set escalate=true if there's something worth a deeper look.
 """
 
-ANALYSIS_SYSTEM_PROMPT = """You are an expert options trader analyzing Skylit Heatseeker dealer positioning heatmaps for 0DTE (zero days to expiration) options trading.
+LEGACY_ANALYSIS_SYSTEM_PROMPT = """You are an expert options trader analyzing Skylit Heatseeker dealer positioning heatmaps for 0DTE (zero days to expiration) options trading.
 
 You have deep knowledge of:
 - Heatseeker node types: positive gamma (yellow/green = absorption), negative gamma (purple/blue = amplification)
@@ -282,6 +406,15 @@ class HeatmapAnalyzer:
 
         user_content = []
 
+        # ── Market Timestamp (always first) ────────────────────────
+        # Inject current ET time and session context so the model
+        # factors time-of-day into its analysis and recommendations
+        market_ts = format_market_timestamp()
+        user_content.append({
+            "type": "text",
+            "text": market_ts,
+        })
+
         # ── Grade Context for Claude ───────────────────────────────
         # Prepend quantitative grade summary so Claude has structured data
         if grade_result:
@@ -399,10 +532,13 @@ class HeatmapAnalyzer:
             })
 
         try:
+            # Load the trading analyst system prompt (from prompts/opus_trading_analyst.md)
+            trading_prompt = load_trading_system_prompt()
+
             response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-opus-4-20250514",
                 max_tokens=2000,
-                system=ANALYSIS_SYSTEM_PROMPT,
+                system=trading_prompt,
                 messages=[{"role": "user", "content": user_content}]
             )
 
@@ -415,7 +551,7 @@ class HeatmapAnalyzer:
                     "parse_error": True
                 }
 
-            result['_model'] = 'sonnet'
+            result['_model'] = 'opus'
             result['_timestamp'] = datetime.now(timezone.utc).isoformat()
             result['_image'] = image_path
             result['_input_tokens'] = response.usage.input_tokens
@@ -451,10 +587,10 @@ class HeatmapAnalyzer:
                     'input_tokens': sum(a.get('_input_tokens', 0) for a in self._analysis_log if a.get('_model') == 'haiku'),
                     'output_tokens': sum(a.get('_output_tokens', 0) for a in self._analysis_log if a.get('_model') == 'haiku'),
                 },
-                'sonnet': {
-                    'count': sum(1 for a in self._analysis_log if a.get('_model') == 'sonnet'),
-                    'input_tokens': sum(a.get('_input_tokens', 0) for a in self._analysis_log if a.get('_model') == 'sonnet'),
-                    'output_tokens': sum(a.get('_output_tokens', 0) for a in self._analysis_log if a.get('_model') == 'sonnet'),
+                'opus': {
+                    'count': sum(1 for a in self._analysis_log if a.get('_model') == 'opus'),
+                    'input_tokens': sum(a.get('_input_tokens', 0) for a in self._analysis_log if a.get('_model') == 'opus'),
+                    'output_tokens': sum(a.get('_output_tokens', 0) for a in self._analysis_log if a.get('_model') == 'opus'),
                 },
             }
         }
