@@ -52,10 +52,10 @@ def receive_capture():
     image_file = request.files['image']
     # Default filename uses dashes instead of colons (Windows-safe)
     default_name = f'capture_{datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")}.png'
-    filename = request.form.get('filename', default_name)
-    date_str = request.form.get('date', datetime.now(timezone.utc).strftime('%Y-%m-%d'))
-    timestamp = request.form.get('timestamp', datetime.now(timezone.utc).isoformat())
-    save_path_override = request.form.get('savePath', '')
+    filename = request.form.get('filename', default_name).strip()
+    date_str = request.form.get('date', datetime.now(timezone.utc).strftime('%Y-%m-%d')).strip()
+    timestamp = request.form.get('timestamp', datetime.now(timezone.utc).isoformat()).strip()
+    save_path_override = request.form.get('savePath', '').strip()
     scraped_data_raw = request.form.get('scraped_data', '')
 
     # Parse scraped DOM data if provided
