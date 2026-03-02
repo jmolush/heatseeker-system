@@ -106,6 +106,16 @@ Respond with EXACTLY this structure for every analysis:
 
 ---
 
+**🎯 IMMEDIATE TRADE RECOMMENDATION**:
+- Action: [BUY CALL / BUY PUT / NO TRADE]
+- Underlying: [SPY / QQQ / SPX / ticker]
+- Strike: [specific strike price]
+- Expiration: [specific date]
+- Target Delta: [delta value]
+- Estimated Entry: [market order price range if inferable]
+
+**⚡ WHY THIS TRADE**: [EXACTLY 3 sentences explaining: (1) the dominant positioning/regime, (2) the mechanical reason dealers will drive price in the expected direction, (3) why this specific strike/timing capitalizes on that flow. Keep this ultra-concise for time-sensitive execution.]
+
 **TIMESTAMP**: [echo back the provided market timestamp and session label]
 
 **REGIME**: [LONG GAMMA / SHORT GAMMA / TRANSITIONAL] | Aggregate GEX: [value/direction]
@@ -120,14 +130,6 @@ Respond with EXACTLY this structure for every analysis:
 - Alignment: [CONFIRMED / DIVERGENT — explain if divergent]
 
 **THESIS**: [2-4 sentences explaining WHY the directional bias exists based on the dealer positioning data. Reference specific levels. Explain the mechanical reason dealers will drive price in the expected direction. This is the causal argument, not a guess. If NO TRADE, explain why no setup has sufficient edge.]
-
-**TRADE**:
-- Action: [BUY CALL / BUY PUT / NO TRADE]
-- Underlying: [SPY / QQQ / SPX / ticker]
-- Strike: [specific strike price]
-- Expiration: [specific date]
-- Target Delta: [delta value]
-- Estimated Entry: [market order price range if inferable]
 
 **RISK/REWARD**:
 - Key support (for calls) or resistance (for puts): [level]
